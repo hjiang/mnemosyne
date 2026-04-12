@@ -281,6 +281,67 @@ func TestInsertAttachment_And_List(t *testing.T) {
 	}
 }
 
+func TestGetAttachment(t *testing.T) {
+	repo := newTestRepo(t)
+	msgHash := testHash("att-get")
+	date := int64(1700000000)
+
+	_ = repo.Insert(&Message{Hash: msgHash, UserID: 1, Subject: "x", Date: &date, Size: 10, HasAttachments: true})
+
+	attHash := testHash("att-blob")
+	att := &Attachment{
+		MessageHash: msgHash, Filename: "doc.pdf",
+		MimeType: "application/pdf", Size: 1234,
+		BlobHash: attHash, TextExtracted: 0,
+	}
+	if err := repo.InsertAttachment(att); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetAttachment(att.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Filename != "doc.pdf" {
+		t.Errorf("Filename = %q, want %q", got.Filename, "doc.pdf")
+	}
+	if got.Size != 1234 {
+		t.Errorf("Size = %d, want 1234", got.Size)
+	}
+}
+
+func TestGetAttachment_UserIsolation(t *testing.T) {
+	repo := newTestRepo(t)
+	msgHash := testHash("att-iso")
+	date := int64(1700000000)
+
+	_ = repo.Insert(&Message{Hash: msgHash, UserID: 1, Subject: "x", Date: &date, Size: 10, HasAttachments: true})
+
+	att := &Attachment{
+		MessageHash: msgHash, Filename: "secret.pdf",
+		MimeType: "application/pdf", Size: 100,
+		BlobHash: testHash("att-iso-blob"), TextExtracted: 0,
+	}
+	if err := repo.InsertAttachment(att); err != nil {
+		t.Fatal(err)
+	}
+
+	// User 2 cannot access user 1's attachment.
+	_, err := repo.GetAttachment(att.ID, 2)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for wrong user, got %v", err)
+	}
+}
+
+func TestGetAttachment_NotFound(t *testing.T) {
+	repo := newTestRepo(t)
+
+	_, err := repo.GetAttachment(9999, 1)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
 func TestRepo_DBErrors(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.Open(filepath.Join(dir, "test.db"))
@@ -325,6 +386,9 @@ func TestRepo_DBErrors(t *testing.T) {
 	}
 	if _, err := repo.ListAttachments(hash); err == nil {
 		t.Error("expected ListAttachments error on closed DB")
+	}
+	if _, err := repo.GetAttachment(1, 1); err == nil {
+		t.Error("expected GetAttachment error on closed DB")
 	}
 }
 

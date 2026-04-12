@@ -321,6 +321,26 @@ func (r *Repo) DeleteLocationsByFolder(folderID int64) error {
 	return nil
 }
 
+// GetAttachment retrieves an attachment by ID, scoped to the given user.
+// enforces user isolation
+func (r *Repo) GetAttachment(id, userID int64) (*Attachment, error) {
+	var a Attachment
+	err := r.db.QueryRow(
+		`SELECT a.id, a.message_hash, a.filename, a.mime_type, a.size, a.blob_hash, a.text_extracted
+		 FROM attachments a
+		 JOIN messages m ON a.message_hash = m.hash
+		 WHERE a.id = ? AND m.user_id = ?`,
+		id, userID,
+	).Scan(&a.ID, &a.MessageHash, &a.Filename, &a.MimeType, &a.Size, &a.BlobHash, &a.TextExtracted)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("querying attachment: %w", err)
+	}
+	return &a, nil
+}
+
 // ListAttachments returns attachments for a message.
 func (r *Repo) ListAttachments(messageHash []byte) ([]*Attachment, error) {
 	rows, err := r.db.Query(

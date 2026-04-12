@@ -98,6 +98,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		r.Get("/browse/{folderID}", s.browseHandler)
 		r.Get("/search", s.searchHandler)
 		r.Get("/message/{hash}", s.messageHandler)
+		r.Get("/attachment/{id}", s.attachmentDownloadHandler)
 		r.Post("/export", s.exportHandler)
 	})
 

@@ -23,7 +23,7 @@
             <strong>Attachments</strong>
             <ul>
                 {{range .Attachments}}
-                <li>{{.Filename}} <span class="text-muted">({{.MimeType}})</span></li>
+                <li><a href="/attachment/{{.ID}}">{{.Filename}}</a> <span class="text-muted">({{.MimeType}})</span></li>
                 {{end}}
             </ul>
         </div>
