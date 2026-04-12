@@ -15,6 +15,7 @@ import (
 	"github.com/hjiang/mnemosyne/internal/accounts"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
 	"github.com/hjiang/mnemosyne/internal/blobs"
+	"github.com/hjiang/mnemosyne/internal/extract"
 	"github.com/hjiang/mnemosyne/internal/messages"
 )
 
@@ -165,6 +166,7 @@ func (o *Orchestrator) storeMessage(
 		}
 
 		hasAtt := hasAttachments(body)
+		bodyText := ExtractBodyText(body)
 		msg := &messages.Message{
 			Hash:           hash[:],
 			UserID:         userID,
@@ -176,6 +178,7 @@ func (o *Orchestrator) storeMessage(
 			Date:           &env.Date,
 			Size:           int64(len(body)),
 			HasAttachments: hasAtt,
+			BodyText:       bodyText,
 		}
 		if err := o.messages.Insert(msg); err != nil {
 			return false, fmt.Errorf("inserting message: %w", err)
@@ -183,7 +186,7 @@ func (o *Orchestrator) storeMessage(
 
 		// Index into FTS5.
 		if rowid, err := o.messages.GetRowID(hash[:]); err == nil {
-			_ = o.messages.IndexFTS(rowid, env.Subject, env.From, env.To, env.Cc, "")
+			_ = o.messages.IndexFTS(rowid, env.Subject, env.From, env.To, env.Cc, bodyText)
 		}
 
 		if hasAtt {
@@ -254,6 +257,69 @@ func (o *Orchestrator) storeAttachments(body, msgHash []byte) {
 			TextExtracted: 0,
 		})
 	}
+}
+
+// ExtractBodyText parses a raw MIME message and returns the text body.
+// For simple text/plain messages, it returns the body directly.
+// For multipart messages, it prefers text/plain over text/html.
+func ExtractBodyText(raw []byte) string {
+	entity, err := message.Read(bytes.NewReader(raw))
+	if err != nil {
+		return ""
+	}
+
+	mediaType, _, _ := entity.Header.ContentType()
+
+	if strings.HasPrefix(mediaType, "text/plain") {
+		text, err := io.ReadAll(entity.Body)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(text))
+	}
+
+	if strings.HasPrefix(mediaType, "text/html") {
+		ext := &extract.HTMLExtractor{}
+		text, err := ext.Extract(entity.Body)
+		if err != nil {
+			return ""
+		}
+		return text
+	}
+
+	mr := entity.MultipartReader()
+	if mr == nil {
+		return ""
+	}
+
+	var htmlFallback string
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+
+		partType, _, _ := part.Header.ContentType()
+
+		if partType == "text/plain" {
+			text, err := io.ReadAll(part.Body)
+			if err != nil {
+				continue
+			}
+			return strings.TrimSpace(string(text))
+		}
+
+		if partType == "text/html" && htmlFallback == "" {
+			ext := &extract.HTMLExtractor{}
+			text, err := ext.Extract(part.Body)
+			if err != nil {
+				continue
+			}
+			htmlFallback = text
+		}
+	}
+
+	return htmlFallback
 }
 
 func hasAttachments(body []byte) bool {

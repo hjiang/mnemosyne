@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -131,6 +132,9 @@ func runServe() error {
 	// Backfill FTS index for any unindexed messages.
 	go backfillFTS(msgRepo)
 
+	// Backfill body_text for messages that were backed up before text extraction was added.
+	go backfillBodyText(msgRepo, blobStore)
+
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           srv,
@@ -176,6 +180,47 @@ func backfillFTS(msgRepo *messages.Repo) {
 		_ = msgRepo.IndexFTS(rowid, m.Subject, m.FromAddr, m.ToAddrs, m.CcAddrs, m.BodyText)
 	}
 	log.Printf("FTS backfill: done")
+}
+
+func backfillBodyText(msgRepo *messages.Repo, blobStore *blobs.Store) {
+	const batchSize = 500
+	total := 0
+	for {
+		msgs, err := msgRepo.ListEmptyBodyText(batchSize)
+		if err != nil {
+			log.Printf("body_text backfill: listing failed: %v", err)
+			return
+		}
+		if len(msgs) == 0 {
+			break
+		}
+		if total == 0 {
+			log.Printf("body_text backfill: starting")
+		}
+		for _, m := range msgs {
+			rc, err := blobStore.Get(m.Hash)
+			if err != nil {
+				continue
+			}
+			raw, err := io.ReadAll(rc)
+			rc.Close() //nolint:errcheck,gosec
+			if err != nil {
+				continue
+			}
+			bodyText := backup.ExtractBodyText(raw)
+			if bodyText == "" {
+				continue
+			}
+			_ = msgRepo.UpdateBodyText(m.Hash, bodyText)
+		}
+		total += len(msgs)
+		if len(msgs) < batchSize {
+			break
+		}
+	}
+	if total > 0 {
+		log.Printf("body_text backfill: processed %d messages", total)
+	}
 }
 
 func backupJobHandler(orch *backup.Orchestrator) jobs.Handler {

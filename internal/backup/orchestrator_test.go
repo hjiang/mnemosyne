@@ -7,6 +7,7 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hjiang/mnemosyne/internal/accounts"
@@ -402,6 +403,70 @@ func TestOrchestrator_DisabledFolder(t *testing.T) {
 	}
 	if result.NewMessages != 0 {
 		t.Errorf("NewMessages = %d, want 0 (folder disabled)", result.NewMessages)
+	}
+}
+
+// Test: Backup extracts body text from plain-text email.
+func TestOrchestrator_BodyTextExtracted(t *testing.T) {
+	env := newTestEnv(t)
+	enableFolder(t, env, "INBOX")
+
+	raw := []byte("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Body test\r\nMessage-ID: <bodytest@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nHello, this is the email body.\r\n")
+	env.imapSrv.AppendMessage(t, "INBOX", raw)
+
+	_, err := env.orchestrator.Run(env.accountID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := sha256.Sum256(raw)
+	msg, err := env.messagesRepo.GetByHash(h[:], env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if msg.BodyText == "" {
+		t.Error("BodyText is empty, want extracted body text")
+	}
+	if !strings.Contains(msg.BodyText, "Hello, this is the email body") {
+		t.Errorf("BodyText = %q, want to contain email body text", msg.BodyText)
+	}
+}
+
+// Test: Backup extracts body text from multipart email with text/plain part.
+func TestOrchestrator_BodyTextExtracted_Multipart(t *testing.T) {
+	env := newTestEnv(t)
+	enableFolder(t, env, "INBOX")
+
+	boundary := "----=_Part_99999"
+	raw := fmt.Sprintf("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Multipart body\r\nMessage-ID: <mpbody@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n--%s\r\nContent-Type: text/plain\r\n\r\nPlain text version of the email.\r\n--%s\r\nContent-Type: text/html\r\n\r\n<html><body><p>HTML version of the email.</p></body></html>\r\n--%s--\r\n", boundary, boundary, boundary, boundary)
+	env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+
+	_, err := env.orchestrator.Run(env.accountID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := sha256.Sum256([]byte(raw))
+	msg, err := env.messagesRepo.GetByHash(h[:], env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if msg.BodyText == "" {
+		t.Error("BodyText is empty, want extracted body text from multipart")
+	}
+	if !strings.Contains(msg.BodyText, "Plain text version") {
+		t.Errorf("BodyText = %q, want text/plain part content", msg.BodyText)
+	}
+}
+
+// Test: ExtractBodyText handles HTML-only email.
+func TestExtractBodyText_HTMLOnly(t *testing.T) {
+	raw := []byte("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: HTML only\r\nMessage-ID: <html@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/html\r\n\r\n<html><body><p>Hello from HTML</p></body></html>\r\n")
+	text := ExtractBodyText(raw)
+	if !strings.Contains(text, "Hello from HTML") {
+		t.Errorf("ExtractBodyText = %q, want to contain 'Hello from HTML'", text)
 	}
 }
 
