@@ -59,7 +59,7 @@ func newAcctTestEnv(t *testing.T) *acctTestEnv {
 
 	searchExec := search.NewExecutor(database)
 	jobQueue := jobs.NewQueue(database, clock.Now)
-	srv := New(userRepo, sessions, acctRepo, orch, jobQueue, searchExec, store)
+	srv := New(userRepo, sessions, acctRepo, orch, jobQueue, msgRepo, searchExec, store)
 
 	hashA, _ := auth.HashPassword("pass")
 	uA, _ := userRepo.Create("a@test.com", hashA)

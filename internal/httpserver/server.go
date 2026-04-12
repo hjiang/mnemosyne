@@ -13,6 +13,7 @@ import (
 	"github.com/hjiang/mnemosyne/internal/backup"
 	"github.com/hjiang/mnemosyne/internal/blobs"
 	"github.com/hjiang/mnemosyne/internal/jobs"
+	"github.com/hjiang/mnemosyne/internal/messages"
 	"github.com/hjiang/mnemosyne/internal/search"
 	"github.com/hjiang/mnemosyne/internal/users"
 )
@@ -32,20 +33,28 @@ type Server struct {
 	accounts  *accounts.Repo
 	backup    *backup.Orchestrator
 	queue     *jobs.Queue
+	messages  *messages.Repo
 	search    *search.Executor
 	blobs     *blobs.Store
 }
 
 // New creates an HTTP server with all routes wired.
 // acctRepo and orch may be nil if IMAP features are not yet configured.
-func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.Repo, orch *backup.Orchestrator, jobQueue *jobs.Queue, searchExec *search.Executor, blobStore *blobs.Store) *Server {
+func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.Repo, orch *backup.Orchestrator, jobQueue *jobs.Queue, msgRepo *messages.Repo, searchExec *search.Executor, blobStore *blobs.Store) *Server {
+	funcMap := template.FuncMap{
+		"hexhash": hex.EncodeToString,
+	}
+	parse := func(name string) *template.Template {
+		return template.Must(template.New(name).Funcs(funcMap).ParseFS(templateFS, "templates/"+name))
+	}
 	templates := map[string]*template.Template{
-		"login.html":        template.Must(template.ParseFS(templateFS, "templates/login.html")),
-		"home.html":         template.Must(template.ParseFS(templateFS, "templates/home.html")),
-		"accounts.html":     template.Must(template.ParseFS(templateFS, "templates/accounts.html")),
-		"folders.html":      template.Must(template.ParseFS(templateFS, "templates/folders.html")),
-		"backup_result.html": template.Must(template.ParseFS(templateFS, "templates/backup_result.html")),
-		"search.html":        template.Must(template.ParseFS(templateFS, "templates/search.html")),
+		"login.html":         parse("login.html"),
+		"home.html":          parse("home.html"),
+		"accounts.html":      parse("accounts.html"),
+		"folders.html":       parse("folders.html"),
+		"backup_result.html": parse("backup_result.html"),
+		"search.html":        parse("search.html"),
+		"message.html":       parse("message.html"),
 	}
 
 	s := &Server{
@@ -56,6 +65,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		accounts:  acctRepo,
 		backup:    orch,
 		queue:     jobQueue,
+		messages:  msgRepo,
 		search:    searchExec,
 		blobs:     blobStore,
 	}
@@ -76,6 +86,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		r.Post("/accounts/{id}/folders/{folderID}/policy", s.folderPolicyUpdate)
 		r.Post("/accounts/{id}/backup", s.backupRun)
 		r.Get("/search", s.searchHandler)
+		r.Get("/message/{hash}", s.messageHandler)
 		r.Post("/export", s.exportHandler)
 	})
 

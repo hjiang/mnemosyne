@@ -42,12 +42,14 @@
     {{if .Results}}
     <p class="result-count">{{.Count}} result{{if gt .Count 1}}s{{end}}</p>
     {{range .Results}}
+    <a href="/message/{{hexhash .Hash}}" class="result-link">
     <article class="card result-card">
         <header>
             <strong>{{.Subject}}</strong>
         </header>
         <div class="result-meta">From: {{.FromAddr}} &middot; To: {{.ToAddrs}}</div>
     </article>
+    </a>
     {{end}}
     {{end}}
 </main>

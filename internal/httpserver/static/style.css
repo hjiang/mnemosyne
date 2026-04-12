@@ -411,5 +411,82 @@ article.card footer {
     margin-bottom: 1rem;
 }
 
+/* ── Message view ──────────────────────────── */
+
+.message-view {
+    border: 1px solid var(--mnemosyne-border);
+    border-radius: 0.5rem;
+    background: var(--pico-card-background-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.message-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--mnemosyne-border);
+}
+
+.message-header h2 {
+    margin-bottom: 1rem;
+}
+
+.message-fields {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 1rem;
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+.message-fields dt {
+    font-weight: 600;
+    color: var(--mnemosyne-text-muted);
+}
+
+.message-fields dd {
+    margin: 0;
+}
+
+.message-attachments {
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--mnemosyne-border);
+    background: var(--mnemosyne-bg-subtle);
+    font-size: 0.9rem;
+}
+
+.message-attachments ul {
+    margin: 0.25rem 0 0 0;
+    padding-left: 1.25rem;
+}
+
+.message-body {
+    padding: 1.5rem;
+}
+
+.message-body pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin: 0;
+    font-family: inherit;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+/* ── Result links ──────────────────────────── */
+
+a.result-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+a.result-link:hover .result-card {
+    border-color: var(--mnemosyne-accent);
+}
+
+/* ── Utility ────────────────────────────────── */
+
 .mt-0 { margin-top: 0; }
 .mb-0 { margin-bottom: 0; }

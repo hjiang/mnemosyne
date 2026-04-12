@@ -126,7 +126,7 @@ func runServe() error {
 		defer sched.Stop()
 	}
 
-	srv := httpserver.New(userRepo, sessions, acctRepo, orch, jobQueue, searchExec, blobStore)
+	srv := httpserver.New(userRepo, sessions, acctRepo, orch, jobQueue, msgRepo, searchExec, blobStore)
 
 	// Backfill FTS index for any unindexed messages.
 	go backfillFTS(msgRepo)

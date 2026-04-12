@@ -39,7 +39,7 @@ func newSearchTestEnv(t *testing.T) *searchTestEnv {
 	userRepo := users.NewRepo(database, clock.Now)
 	sessions := auth.NewSessionStore(database, clock.Now, 1*time.Hour)
 	searchExec := search.NewExecutor(database)
-	srv := New(userRepo, sessions, nil, nil, nil, searchExec, nil)
+	srv := New(userRepo, sessions, nil, nil, nil, nil, searchExec, nil)
 
 	hashA, _ := auth.HashPassword("pass")
 	uA, _ := userRepo.Create("a@test.com", hashA)
