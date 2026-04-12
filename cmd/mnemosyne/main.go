@@ -211,7 +211,10 @@ func backfillBodyText(msgRepo *messages.Repo, blobStore *blobs.Store) {
 			if bodyText == "" {
 				continue
 			}
-			_ = msgRepo.UpdateBodyText(m.Hash, bodyText)
+			if err := msgRepo.UpdateBodyText(m.Hash, bodyText); err != nil {
+				continue
+			}
+			_ = msgRepo.ReindexFTS(m.Hash, m.Subject, m.FromAddr, m.ToAddrs, m.CcAddrs, bodyText)
 		}
 		total += len(msgs)
 		if len(msgs) < batchSize {

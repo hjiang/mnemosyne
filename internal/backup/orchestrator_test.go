@@ -470,6 +470,72 @@ func TestExtractBodyText_HTMLOnly(t *testing.T) {
 	}
 }
 
+// Test: ExtractBodyText handles nested multipart/mixed > multipart/alternative.
+func TestExtractBodyText_NestedMultipart(t *testing.T) {
+	raw := []byte("From: sender@test.com\r\n" +
+		"To: rcpt@test.com\r\n" +
+		"Subject: Nested\r\n" +
+		"Message-ID: <nested@test>\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"outer\"\r\n" +
+		"\r\n" +
+		"--outer\r\n" +
+		"Content-Type: multipart/alternative; boundary=\"inner\"\r\n" +
+		"\r\n" +
+		"--inner\r\n" +
+		"Content-Type: text/plain\r\n" +
+		"\r\n" +
+		"Hello plain\r\n" +
+		"--inner\r\n" +
+		"Content-Type: text/html\r\n" +
+		"\r\n" +
+		"<p>Hello html</p>\r\n" +
+		"--inner--\r\n" +
+		"--outer\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"file.bin\"\r\n" +
+		"\r\n" +
+		"binarydata\r\n" +
+		"--outer--\r\n")
+
+	text := ExtractBodyText(raw)
+	if text != "Hello plain" {
+		t.Errorf("ExtractBodyText = %q, want %q", text, "Hello plain")
+	}
+}
+
+// Test: ExtractBodyText falls back to HTML in nested multipart.
+func TestExtractBodyText_NestedMultipartHTMLOnly(t *testing.T) {
+	raw := []byte("From: sender@test.com\r\n" +
+		"To: rcpt@test.com\r\n" +
+		"Subject: Nested HTML\r\n" +
+		"Message-ID: <nested-html@test>\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"outer\"\r\n" +
+		"\r\n" +
+		"--outer\r\n" +
+		"Content-Type: multipart/alternative; boundary=\"inner\"\r\n" +
+		"\r\n" +
+		"--inner\r\n" +
+		"Content-Type: text/html\r\n" +
+		"\r\n" +
+		"<p>Only HTML body</p>\r\n" +
+		"--inner--\r\n" +
+		"--outer\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"file.bin\"\r\n" +
+		"\r\n" +
+		"binarydata\r\n" +
+		"--outer--\r\n")
+
+	text := ExtractBodyText(raw)
+	if !strings.Contains(text, "Only HTML body") {
+		t.Errorf("ExtractBodyText = %q, want to contain %q", text, "Only HTML body")
+	}
+}
+
 // Test: Retention policy is applied after backup — older messages are expunged from IMAP.
 func TestOrchestrator_RetentionApplied(t *testing.T) {
 	env := newTestEnv(t)

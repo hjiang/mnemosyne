@@ -286,13 +286,19 @@ func (o *Orchestrator) storeAttachments(body, msgHash []byte) {
 
 // ExtractBodyText parses a raw MIME message and returns the text body.
 // For simple text/plain messages, it returns the body directly.
-// For multipart messages, it prefers text/plain over text/html.
+// For multipart messages, it recurses into nested parts and prefers
+// text/plain over text/html.
 func ExtractBodyText(raw []byte) string {
 	entity, err := message.Read(bytes.NewReader(raw))
 	if err != nil {
 		return ""
 	}
+	return extractEntityText(entity)
+}
 
+// extractEntityText extracts body text from a single MIME entity,
+// recursing into multipart containers.
+func extractEntityText(entity *message.Entity) string {
 	mediaType, _, _ := entity.Header.ContentType()
 
 	if strings.HasPrefix(mediaType, "text/plain") {
@@ -341,6 +347,12 @@ func ExtractBodyText(raw []byte) string {
 				continue
 			}
 			htmlFallback = text
+		}
+
+		if strings.HasPrefix(partType, "multipart/") {
+			if text := extractEntityText(part); text != "" {
+				return text
+			}
 		}
 	}
 

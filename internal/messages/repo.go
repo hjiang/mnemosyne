@@ -386,6 +386,20 @@ func (r *Repo) GetRowID(hash []byte) (int64, error) {
 	return rowid, nil
 }
 
+// ReindexFTS deletes and re-inserts a message's FTS row.
+// Used when body_text is backfilled after initial indexing.
+func (r *Repo) ReindexFTS(hash []byte, subject, fromAddr, toAddrs, ccAddrs, bodyText string) error {
+	rowid, err := r.GetRowID(hash)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.Exec("DELETE FROM messages_fts WHERE rowid = ?", rowid)
+	if err != nil {
+		return fmt.Errorf("deleting FTS row: %w", err)
+	}
+	return r.IndexFTS(rowid, subject, fromAddr, toAddrs, ccAddrs, bodyText)
+}
+
 // UpdateAttachmentText marks an attachment as text-extracted and updates its content.
 func (r *Repo) UpdateAttachmentText(attID int64, _ string, status int) error {
 	_, err := r.db.Exec(
