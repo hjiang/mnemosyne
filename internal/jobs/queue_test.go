@@ -1,0 +1,154 @@
+package jobs
+
+import (
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/hjiang/mnemosyne/internal/db"
+)
+
+func newTestQueue(t *testing.T) *Queue {
+	t.Helper()
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	return NewQueue(database, func() time.Time { return clock })
+}
+
+// Test 25: Enqueue persists a row with state=pending.
+func TestEnqueue(t *testing.T) {
+	q := newTestQueue(t)
+	j, err := q.Enqueue("extract", `{"attachment_id":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Kind != "extract" {
+		t.Errorf("Kind = %q, want extract", j.Kind)
+	}
+	if j.State != "pending" {
+		t.Errorf("State = %q, want pending", j.State)
+	}
+	if j.Payload != `{"attachment_id":1}` {
+		t.Errorf("Payload = %q", j.Payload)
+	}
+
+	// Verify in DB.
+	got, err := q.GetByID(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "pending" {
+		t.Errorf("DB State = %q, want pending", got.State)
+	}
+}
+
+// Test 26: Sequential claims return distinct jobs.
+func TestClaim_Distinct(t *testing.T) {
+	q := newTestQueue(t)
+	for i := 0; i < 5; i++ {
+		if _, err := q.Enqueue("extract", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	claimed := make(map[int64]bool)
+	for i := 0; i < 5; i++ {
+		j, err := q.Claim()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if j == nil {
+			t.Fatalf("claim %d returned nil", i)
+		}
+		if claimed[j.ID] {
+			t.Errorf("job %d claimed twice", j.ID)
+		}
+		claimed[j.ID] = true
+	}
+
+	if len(claimed) != 5 {
+		t.Errorf("claimed %d distinct jobs, want 5", len(claimed))
+	}
+
+	// No more pending jobs.
+	j, err := q.Claim()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j != nil {
+		t.Error("expected nil after all jobs claimed")
+	}
+}
+
+// Test 27: Complete transitions running → done.
+func TestComplete(t *testing.T) {
+	q := newTestQueue(t)
+	if _, err := q.Enqueue("extract", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := q.Claim()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.State != "running" {
+		t.Fatalf("State = %q, want running", j.State)
+	}
+
+	if err := q.Complete(j.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := q.GetByID(j.ID)
+	if got.State != "done" {
+		t.Errorf("State = %q, want done", got.State)
+	}
+	if got.FinishedAt == nil {
+		t.Error("FinishedAt should be set")
+	}
+}
+
+// Test 28: Fail transitions to failed, increments attempts, records error.
+func TestFail(t *testing.T) {
+	q := newTestQueue(t)
+	if _, err := q.Enqueue("extract", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	j, _ := q.Claim()
+	if err := q.Fail(j.ID, "pdftotext crashed"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := q.GetByID(j.ID)
+	if got.State != "failed" {
+		t.Errorf("State = %q, want failed", got.State)
+	}
+	if got.Error != "pdftotext crashed" {
+		t.Errorf("Error = %q, want 'pdftotext crashed'", got.Error)
+	}
+	if got.Attempts != 1 {
+		t.Errorf("Attempts = %d, want 1", got.Attempts)
+	}
+}
+
+// Claim on empty queue returns nil.
+func TestClaim_Empty(t *testing.T) {
+	q := newTestQueue(t)
+	j, err := q.Claim()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j != nil {
+		t.Error("expected nil for empty queue")
+	}
+}

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}} - Mnemosyne</title>
+    <link rel="stylesheet" href="/static/pico.min.css">
+</head>
+<body>
+<main class="container">
+    <nav>
+        <ul><li><strong>Mnemosyne</strong></li></ul>
+        <ul><li><a href="/accounts">Accounts</a></li></ul>
+    </nav>
+    <h2>Folders for {{.Account.Label}}</h2>
+    {{range .Folders}}
+    <form method="POST" action="/accounts/{{$.Account.ID}}/folders/{{.ID}}/toggle" style="margin-bottom:0.5em">
+        <label>
+            <input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}} onchange="this.form.submit()">
+            {{.Name}}
+        </label>
+    </form>
+    {{end}}
+    <p><a href="/accounts">Back to accounts</a></p>
+</main>
+</body>
+</html>

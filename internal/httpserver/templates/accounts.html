@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}} - Mnemosyne</title>
+    <link rel="stylesheet" href="/static/pico.min.css">
+</head>
+<body>
+<main class="container">
+    <nav>
+        <ul><li><strong>Mnemosyne</strong></li></ul>
+        <ul><li><a href="/">Home</a></li></ul>
+    </nav>
+    <h2>IMAP Accounts</h2>
+    {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+    {{range .Accounts}}
+    <article>
+        <header><strong>{{.Label}}</strong> ({{.Host}}:{{.Port}})</header>
+        <a href="/accounts/{{.ID}}/folders">Manage folders</a>
+        <form method="POST" action="/accounts/{{.ID}}/backup" style="display:inline;margin-left:1em">
+            <button type="submit" class="outline">Backup now</button>
+        </form>
+    </article>
+    {{end}}
+    <h3>Add account</h3>
+    <form method="POST" action="/accounts">
+        <label>Label <input type="text" name="label" required></label>
+        <label>Host <input type="text" name="host" required></label>
+        <label>Port <input type="number" name="port" value="993" required></label>
+        <label>Username <input type="text" name="username" required></label>
+        <label>Password <input type="password" name="password" required></label>
+        <label><input type="checkbox" name="use_tls" checked> Use TLS</label>
+        <button type="submit">Add account</button>
+    </form>
+</main>
+</body>
+</html>

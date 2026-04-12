@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}} - Mnemosyne</title>
+    <link rel="stylesheet" href="/static/pico.min.css">
+</head>
+<body>
+<main class="container">
+    <nav>
+        <ul><li><strong>Mnemosyne</strong></li></ul>
+        <ul><li><a href="/">Home</a></li><li><a href="/accounts">Accounts</a></li></ul>
+    </nav>
+    <h2>Search</h2>
+    <form method="GET" action="/search">
+        <input type="search" name="q" value="{{.Query}}" placeholder="from:alice subject:report budget" style="width:100%">
+        <button type="submit">Search</button>
+    </form>
+    {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+    {{if .Hint}}
+    <p>Search your backed-up email using Gmail-style operators:</p>
+    <ul>
+        <li><code>from:</code> <code>to:</code> <code>cc:</code> — filter by address</li>
+        <li><code>subject:"exact phrase"</code> — filter by subject</li>
+        <li><code>has:attachment</code> — messages with attachments</li>
+        <li><code>before:2026-01-01</code> <code>after:2025-01-01</code> — date range</li>
+        <li><code>filename:*.pdf</code> — attachment filename</li>
+        <li>Free text is matched against the full-text index</li>
+    </ul>
+    {{end}}
+    {{if .Results}}
+    <p>{{.Count}} result{{if gt .Count 1}}s{{end}}</p>
+    {{range .Results}}
+    <article>
+        <header><strong>{{.Subject}}</strong></header>
+        <small>From: {{.FromAddr}} | To: {{.ToAddrs}}</small>
+    </article>
+    {{end}}
+    {{end}}
+</main>
+</body>
+</html>

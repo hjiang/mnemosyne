@@ -1,0 +1,22 @@
+# Go
+.go/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Nix
+result
+.direnv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Mnemosyne data (dev)
+data/
+*.db
+secret.key
+/mnemosyne

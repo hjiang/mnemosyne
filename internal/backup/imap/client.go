@@ -1,0 +1,210 @@
+// Package imap provides a thin wrapper around the go-imap v2 client
+// for use by the backup orchestrator.
+package imap
+
+import (
+	"fmt"
+	"sort"
+
+	goiap "github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
+)
+
+// FolderInfo contains metadata returned by SELECT.
+type FolderInfo struct {
+	NumMessages uint32
+	UIDValidity uint32
+}
+
+// Envelope contains the metadata for a single message.
+type Envelope struct {
+	UID       uint32
+	MessageID string
+	Subject   string
+	From      string
+	To        string
+	Cc        string
+	Date      int64
+	Size      int64
+}
+
+// Client wraps an authenticated IMAP connection.
+type Client struct {
+	raw *imapclient.Client
+}
+
+// Dial connects to an IMAP server, authenticates, and returns a Client.
+// Set tls to true for implicit TLS (port 993).
+func Dial(addr, username, password string, tls bool) (*Client, error) {
+	var raw *imapclient.Client
+	var err error
+	if tls {
+		raw, err = imapclient.DialTLS(addr, nil)
+	} else {
+		raw, err = imapclient.DialInsecure(addr, nil)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("connecting to %s: %w", addr, err)
+	}
+
+	if err := raw.Login(username, password).Wait(); err != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("login: %w", err)
+	}
+
+	return &Client{raw: raw}, nil
+}
+
+// Close logs out and closes the connection.
+func (c *Client) Close() error {
+	_ = c.raw.Logout().Wait()
+	return c.raw.Close()
+}
+
+// ListFolders returns the names of all mailboxes.
+func (c *Client) ListFolders() ([]string, error) {
+	cmd := c.raw.List("", "*", nil)
+	data, err := cmd.Collect()
+	if err != nil {
+		return nil, fmt.Errorf("listing folders: %w", err)
+	}
+
+	names := make([]string, len(data))
+	for i, d := range data {
+		names[i] = d.Mailbox
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// SelectFolder selects a mailbox and returns its metadata.
+func (c *Client) SelectFolder(name string) (*FolderInfo, error) {
+	data, err := c.raw.Select(name, nil).Wait()
+	if err != nil {
+		return nil, fmt.Errorf("selecting %q: %w", name, err)
+	}
+	return &FolderInfo{
+		NumMessages: data.NumMessages,
+		UIDValidity: data.UIDValidity,
+	}, nil
+}
+
+// FetchEnvelopes fetches envelope metadata for UIDs in [startUID, endUID].
+func (c *Client) FetchEnvelopes(startUID, endUID uint32) ([]Envelope, error) {
+	uidSet := goiap.UIDSet{goiap.UIDRange{
+		Start: goiap.UID(startUID),
+		Stop:  goiap.UID(endUID),
+	}}
+	opts := &goiap.FetchOptions{
+		UID:        true,
+		Envelope:   true,
+		RFC822Size: true,
+	}
+
+	bufs, err := c.raw.Fetch(uidSet, opts).Collect()
+	if err != nil {
+		return nil, fmt.Errorf("fetching envelopes: %w", err)
+	}
+
+	envs := make([]Envelope, 0, len(bufs))
+	for _, buf := range bufs {
+		env := Envelope{
+			UID:  uint32(buf.UID),
+			Size: buf.RFC822Size,
+		}
+		if buf.Envelope != nil {
+			env.MessageID = buf.Envelope.MessageID
+			env.Subject = buf.Envelope.Subject
+			env.From = formatAddrs(buf.Envelope.From)
+			env.To = formatAddrs(buf.Envelope.To)
+			env.Cc = formatAddrs(buf.Envelope.Cc)
+			if !buf.Envelope.Date.IsZero() {
+				env.Date = buf.Envelope.Date.Unix()
+			}
+		}
+		envs = append(envs, env)
+	}
+
+	sort.Slice(envs, func(i, j int) bool { return envs[i].UID < envs[j].UID })
+	return envs, nil
+}
+
+// FetchBody fetches the full RFC822 body of the message with the given UID.
+func (c *Client) FetchBody(uid uint32) ([]byte, error) {
+	uidSet := goiap.UIDSet{goiap.UIDRange{
+		Start: goiap.UID(uid),
+		Stop:  goiap.UID(uid),
+	}}
+	section := &goiap.FetchItemBodySection{Peek: true}
+	opts := &goiap.FetchOptions{
+		UID:         true,
+		BodySection: []*goiap.FetchItemBodySection{section},
+	}
+
+	cmd := c.raw.Fetch(uidSet, opts)
+	defer cmd.Close() //nolint:errcheck
+
+	msg := cmd.Next()
+	if msg == nil {
+		return nil, fmt.Errorf("no message with UID %d", uid)
+	}
+
+	buf, err := msg.Collect()
+	if err != nil {
+		return nil, fmt.Errorf("collecting message data: %w", err)
+	}
+
+	for _, bs := range buf.BodySection {
+		return bs.Bytes, nil
+	}
+	return nil, fmt.Errorf("no body section in response for UID %d", uid)
+}
+
+// MarkDeleted sets the \Deleted flag on the given UIDs.
+func (c *Client) MarkDeleted(uids []uint32) error {
+	if len(uids) == 0 {
+		return nil
+	}
+	set := make(goiap.UIDSet, len(uids))
+	for i, uid := range uids {
+		set[i] = goiap.UIDRange{Start: goiap.UID(uid), Stop: goiap.UID(uid)}
+	}
+	store := &goiap.StoreFlags{
+		Op:     goiap.StoreFlagsAdd,
+		Flags:  []goiap.Flag{goiap.FlagDeleted},
+		Silent: true,
+	}
+	cmd := c.raw.Store(set, store, nil)
+	return cmd.Close()
+}
+
+// Expunge permanently removes all messages marked \Deleted in the selected mailbox.
+func (c *Client) Expunge() error {
+	return c.raw.Expunge().Close()
+}
+
+func formatAddrs(addrs []goiap.Address) string {
+	if len(addrs) == 0 {
+		return ""
+	}
+	result := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		addr := a.Addr()
+		if addr != "" {
+			result = append(result, addr)
+		}
+	}
+	return joinAddrs(result)
+}
+
+func joinAddrs(addrs []string) string {
+	if len(addrs) == 0 {
+		return ""
+	}
+	out := addrs[0]
+	for _, a := range addrs[1:] {
+		out += ", " + a
+	}
+	return out
+}
+

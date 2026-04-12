@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mnemosyne</title>
+    <link rel="stylesheet" href="/static/pico.min.css">
+    <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<main class="container">
+    <nav>
+        <ul><li><strong>Mnemosyne</strong></li></ul>
+        <ul><li>{{.Email}}</li><li><form method="POST" action="/logout" style="margin:0"><button type="submit" class="outline">Log out</button></form></li></ul>
+    </nav>
+    <p>Welcome to Mnemosyne. More features coming soon.</p>
+</main>
+</body>
+</html>
