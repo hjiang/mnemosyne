@@ -3,12 +3,10 @@ package httpserver
 import (
 	"encoding/hex"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,9 +16,9 @@ import (
 	"github.com/hjiang/mnemosyne/internal/backup"
 	"github.com/hjiang/mnemosyne/internal/blobs"
 	"github.com/hjiang/mnemosyne/internal/db"
+	"github.com/hjiang/mnemosyne/internal/jobs"
 	"github.com/hjiang/mnemosyne/internal/messages"
 	"github.com/hjiang/mnemosyne/internal/search"
-	"github.com/hjiang/mnemosyne/internal/testimap"
 	"github.com/hjiang/mnemosyne/internal/users"
 )
 
@@ -60,7 +58,8 @@ func newAcctTestEnv(t *testing.T) *acctTestEnv {
 	orch := backup.NewOrchestrator(acctRepo, msgRepo, store)
 
 	searchExec := search.NewExecutor(database)
-	srv := New(userRepo, sessions, acctRepo, orch, searchExec, store)
+	jobQueue := jobs.NewQueue(database, clock.Now)
+	srv := New(userRepo, sessions, acctRepo, orch, jobQueue, searchExec, store)
 
 	hashA, _ := auth.HashPassword("pass")
 	uA, _ := userRepo.Create("a@test.com", hashA)
@@ -131,30 +130,22 @@ func TestAccounts_CrossUserFolders_404(t *testing.T) {
 	}
 }
 
-// Test 36: POST /accounts/{id}/backup runs backup and shows result.
+// Test 36: POST /accounts/{id}/backup enqueues a backup job.
 func TestAccounts_BackupRun(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	srv := testimap.New(t)
-	srv.AddFolder(t, "INBOX", 1)
-	srv.SeedMessages(t, "INBOX", 2)
-
-	host, portStr, _ := net.SplitHostPort(srv.Addr)
-	port, _ := strconv.Atoi(portStr)
-	acct, err := env.accounts.Create(env.userAID, "Test", host, port, srv.Username, srv.Password, false)
+	acct, err := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
-	_ = env.accounts.SetFolderEnabled(folder.ID, true)
 
 	rr := env.doRequest(t, "POST", fmt.Sprintf("/accounts/%d/backup", acct.ID), env.cookieA, nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "2 new messages") {
-		t.Errorf("expected '2 new messages' in body, got: %s", body)
+	if !strings.Contains(body, "enqueued") {
+		t.Errorf("expected 'enqueued' in body, got: %s", body)
 	}
 }
 

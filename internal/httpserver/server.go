@@ -12,6 +12,7 @@ import (
 	"github.com/hjiang/mnemosyne/internal/auth"
 	"github.com/hjiang/mnemosyne/internal/backup"
 	"github.com/hjiang/mnemosyne/internal/blobs"
+	"github.com/hjiang/mnemosyne/internal/jobs"
 	"github.com/hjiang/mnemosyne/internal/search"
 	"github.com/hjiang/mnemosyne/internal/users"
 )
@@ -30,13 +31,14 @@ type Server struct {
 	sessions  *auth.SessionStore
 	accounts  *accounts.Repo
 	backup    *backup.Orchestrator
+	queue     *jobs.Queue
 	search    *search.Executor
 	blobs     *blobs.Store
 }
 
 // New creates an HTTP server with all routes wired.
 // acctRepo and orch may be nil if IMAP features are not yet configured.
-func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.Repo, orch *backup.Orchestrator, searchExec *search.Executor, blobStore *blobs.Store) *Server {
+func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.Repo, orch *backup.Orchestrator, jobQueue *jobs.Queue, searchExec *search.Executor, blobStore *blobs.Store) *Server {
 	templates := map[string]*template.Template{
 		"login.html":        template.Must(template.ParseFS(templateFS, "templates/login.html")),
 		"home.html":         template.Must(template.ParseFS(templateFS, "templates/home.html")),
@@ -53,6 +55,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		sessions:  sessions,
 		accounts:  acctRepo,
 		backup:    orch,
+		queue:     jobQueue,
 		search:    searchExec,
 		blobs:     blobStore,
 	}

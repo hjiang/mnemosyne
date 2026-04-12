@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -21,7 +22,9 @@ import (
 	"github.com/hjiang/mnemosyne/internal/config"
 	"github.com/hjiang/mnemosyne/internal/db"
 	"github.com/hjiang/mnemosyne/internal/httpserver"
+	"github.com/hjiang/mnemosyne/internal/jobs"
 	"github.com/hjiang/mnemosyne/internal/messages"
+	"github.com/hjiang/mnemosyne/internal/scheduler"
 	"github.com/hjiang/mnemosyne/internal/search"
 	"github.com/hjiang/mnemosyne/internal/users"
 )
@@ -101,7 +104,29 @@ func runServe() error {
 	blobStore := blobs.NewStore(filepath.Join(cfg.DataDir, "blobs"))
 	orch := backup.NewOrchestrator(acctRepo, msgRepo, blobStore)
 	searchExec := search.NewExecutor(database)
-	srv := httpserver.New(userRepo, sessions, acctRepo, orch, searchExec, blobStore)
+
+	// Job queue and worker pool for async backup jobs.
+	jobQueue := jobs.NewQueue(database, time.Now)
+	if n, err := jobQueue.ReclaimStuck(); err != nil {
+		log.Printf("reclaiming stuck jobs: %v", err)
+	} else if n > 0 {
+		log.Printf("reclaimed %d stuck jobs", n)
+	}
+
+	pool := jobs.NewWorkerPool(jobQueue, backupJobHandler(orch), cfg.Backup.MaxConcurrent, 3)
+	pool.Start()
+
+	// Schedule periodic backups if configured.
+	if cfg.Backup.DefaultSchedule != "" {
+		sched, err := scheduler.New(cfg.Backup.DefaultSchedule, acctRepo, jobQueue)
+		if err != nil {
+			return fmt.Errorf("setting up scheduler: %w", err)
+		}
+		sched.Start()
+		defer sched.Stop()
+	}
+
+	srv := httpserver.New(userRepo, sessions, acctRepo, orch, jobQueue, searchExec, blobStore)
 
 	// Backfill FTS index for any unindexed messages.
 	go backfillFTS(msgRepo)
@@ -118,6 +143,7 @@ func runServe() error {
 
 	go func() {
 		<-ctx.Done()
+		pool.Shutdown(10 * time.Second)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
@@ -150,6 +176,24 @@ func backfillFTS(msgRepo *messages.Repo) {
 		_ = msgRepo.IndexFTS(rowid, m.Subject, m.FromAddr, m.ToAddrs, m.CcAddrs, m.BodyText)
 	}
 	log.Printf("FTS backfill: done")
+}
+
+func backupJobHandler(orch *backup.Orchestrator) jobs.Handler {
+	return func(_ context.Context, job *jobs.Job) error {
+		var p scheduler.BackupPayload
+		if err := json.Unmarshal([]byte(job.Payload), &p); err != nil {
+			return fmt.Errorf("parsing backup payload: %w", err)
+		}
+		result, err := orch.Run(p.AccountID, p.UserID)
+		if err != nil {
+			return err
+		}
+		if len(result.Errors) > 0 {
+			return fmt.Errorf("backup completed with %d errors, first: %v", len(result.Errors), result.Errors[0])
+		}
+		log.Printf("backup: account %d: %d new messages", p.AccountID, result.NewMessages)
+		return nil
+	}
 }
 
 func runAddUser() error {

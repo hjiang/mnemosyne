@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/hjiang/mnemosyne/internal/auth"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
+	"github.com/hjiang/mnemosyne/internal/scheduler"
 )
 
 func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
@@ -124,20 +126,18 @@ func (s *Server) backupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, runErr := s.backup.Run(accountID, userID)
-	var status string
-	switch {
-	case runErr != nil:
-		status = fmt.Sprintf("Backup failed: %v", runErr)
-	case len(result.Errors) > 0:
-		status = fmt.Sprintf("Backup finished with %d errors. %d new messages.", len(result.Errors), result.NewMessages)
-	default:
-		status = fmt.Sprintf("Backup complete. %d new messages.", result.NewMessages)
+	payload, _ := json.Marshal(scheduler.BackupPayload{
+		AccountID: accountID,
+		UserID:    userID,
+	})
+	if _, err := s.queue.Enqueue("backup", string(payload)); err != nil {
+		http.Error(w, "failed to enqueue backup job", http.StatusInternalServerError)
+		return
 	}
 
 	s.render(w, "backup_result.html", map[string]any{
-		"Title":  "Backup Result",
-		"Status": status,
+		"Title":  "Backup",
+		"Status": "Backup job enqueued. It will run in the background.",
 	})
 }
 
