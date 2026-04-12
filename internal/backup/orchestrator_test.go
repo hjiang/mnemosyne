@@ -470,6 +470,65 @@ func TestExtractBodyText_HTMLOnly(t *testing.T) {
 	}
 }
 
+// Test: Retention policy is applied after backup — older messages are expunged from IMAP.
+func TestOrchestrator_RetentionApplied(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+
+	// Seed 5 messages with distinct dates so newest_n ordering is deterministic.
+	for i := 1; i <= 5; i++ {
+		raw := fmt.Sprintf(
+			"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: msg %d\r\nMessage-ID: <ret%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+
+	// Set retention: keep newest 2.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":2}`); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NewMessages != 5 {
+		t.Errorf("NewMessages = %d, want 5", result.NewMessages)
+	}
+
+	// Verify: connect to IMAP server and check that only 2 messages remain.
+	client := connectTestIMAP(t, env.imapSrv)
+	info, err := client.SelectFolder("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.NumMessages != 2 {
+		t.Errorf("IMAP NumMessages after retention = %d, want 2", info.NumMessages)
+	}
+}
+
+// Test: Default "all" policy does not delete any messages from IMAP.
+func TestOrchestrator_RetentionDefaultAll(t *testing.T) {
+	env := newTestEnv(t)
+	enableFolder(t, env, "INBOX")
+	env.imapSrv.SeedMessages(t, "INBOX", 5)
+
+	// Default policy is "all" — no explicit SetFolderPolicy call.
+	if _, err := env.orchestrator.Run(env.accountID, env.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	client := connectTestIMAP(t, env.imapSrv)
+	info, err := client.SelectFolder("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.NumMessages != 5 {
+		t.Errorf("IMAP NumMessages = %d, want 5 (default policy keeps all)", info.NumMessages)
+	}
+}
+
 // Test: Invalid account returns an error.
 func TestOrchestrator_InvalidAccount(t *testing.T) {
 	env := newTestEnv(t)

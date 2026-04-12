@@ -14,6 +14,7 @@ import (
 
 	"github.com/hjiang/mnemosyne/internal/accounts"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
+	"github.com/hjiang/mnemosyne/internal/backup/policy"
 	"github.com/hjiang/mnemosyne/internal/blobs"
 	"github.com/hjiang/mnemosyne/internal/extract"
 	"github.com/hjiang/mnemosyne/internal/messages"
@@ -143,7 +144,31 @@ func (o *Orchestrator) syncFolder(
 	if maxUID > 0 {
 		_ = o.accounts.SetLastSeenUID(folder.ID, maxUID)
 	}
+
+	// Apply retention policy: delete old messages from the IMAP server
+	// now that we've confirmed they're backed up locally.
+	if err := o.applyRetention(client, folder); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("folder %q retention: %w", folder.Name, err))
+	}
+
 	return nil
+}
+
+func (o *Orchestrator) applyRetention(client *imapwrap.Client, folder *accounts.Folder) error {
+	locs, err := o.messages.ListLocationsByFolder(folder.ID)
+	if err != nil {
+		return fmt.Errorf("listing locations: %w", err)
+	}
+
+	msgs := make([]policy.Message, len(locs))
+	for i, loc := range locs {
+		msgs[i] = policy.Message{UID: loc.UID}
+		if loc.InternalDate != nil {
+			msgs[i].InternalDate = *loc.InternalDate
+		}
+	}
+
+	return ApplyRetention(client, folder.PolicyJSON, msgs, true, time.Now())
 }
 
 func (o *Orchestrator) storeMessage(

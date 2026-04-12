@@ -290,6 +290,28 @@ func (r *Repo) CountLocationsByHash(hash []byte) (int, error) {
 	return count, nil
 }
 
+// ListLocationsByFolder returns UID and InternalDate for all locations in a folder.
+func (r *Repo) ListLocationsByFolder(folderID int64) ([]Location, error) {
+	rows, err := r.db.Query(
+		`SELECT uid, internal_date FROM message_locations WHERE folder_id = ?`,
+		folderID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing locations: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var locs []Location
+	for rows.Next() {
+		var loc Location
+		if err := rows.Scan(&loc.UID, &loc.InternalDate); err != nil {
+			return nil, fmt.Errorf("scanning location: %w", err)
+		}
+		locs = append(locs, loc)
+	}
+	return locs, rows.Err()
+}
+
 // DeleteLocationsByFolder removes all locations for a folder (used on UIDVALIDITY reset).
 func (r *Repo) DeleteLocationsByFolder(folderID int64) error {
 	_, err := r.db.Exec("DELETE FROM message_locations WHERE folder_id = ?", folderID)
