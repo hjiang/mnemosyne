@@ -141,6 +141,66 @@ func TestFail(t *testing.T) {
 	}
 }
 
+// ListByUser returns only the matching user's jobs in reverse order.
+func TestListByUser(t *testing.T) {
+	q := newTestQueue(t)
+
+	// Enqueue jobs for two different users.
+	for i := 0; i < 3; i++ {
+		if _, err := q.Enqueue("backup", `{"account_id":1,"user_id":10}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := q.Enqueue("backup", `{"account_id":2,"user_id":20}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// User 10 should see 3 jobs.
+	jobs10, err := q.ListByUser(10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs10) != 3 {
+		t.Errorf("user 10: got %d jobs, want 3", len(jobs10))
+	}
+
+	// Verify newest-first ordering.
+	for i := 1; i < len(jobs10); i++ {
+		if jobs10[i].ID >= jobs10[i-1].ID {
+			t.Errorf("jobs not in descending ID order: %d >= %d", jobs10[i].ID, jobs10[i-1].ID)
+		}
+	}
+
+	// User 20 should see 2 jobs.
+	jobs20, err := q.ListByUser(20, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs20) != 2 {
+		t.Errorf("user 20: got %d jobs, want 2", len(jobs20))
+	}
+
+	// Limit parameter works.
+	limited, err := q.ListByUser(10, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 1 {
+		t.Errorf("limited: got %d jobs, want 1", len(limited))
+	}
+
+	// Non-existent user gets empty list.
+	empty, err := q.ListByUser(999, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("non-existent user: got %d jobs, want 0", len(empty))
+	}
+}
+
 // Claim on empty queue returns nil.
 func TestClaim_Empty(t *testing.T) {
 	q := newTestQueue(t)

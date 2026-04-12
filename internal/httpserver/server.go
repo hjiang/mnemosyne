@@ -55,6 +55,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		"backup_result.html": parse("backup_result.html"),
 		"search.html":        parse("search.html"),
 		"message.html":       parse("message.html"),
+		"backups.html":       parse("backups.html"),
 	}
 
 	s := &Server{
@@ -85,6 +86,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		r.Post("/accounts/{id}/folders/{folderID}/toggle", s.folderToggle)
 		r.Post("/accounts/{id}/folders/{folderID}/policy", s.folderPolicyUpdate)
 		r.Post("/accounts/{id}/backup", s.backupRun)
+		r.Get("/backups", s.backupsList)
 		r.Get("/search", s.searchHandler)
 		r.Get("/message/{hash}", s.messageHandler)
 		r.Post("/export", s.exportHandler)

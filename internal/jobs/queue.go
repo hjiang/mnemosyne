@@ -113,6 +113,36 @@ func (q *Queue) Fail(jobID int64, errMsg string) error {
 	return nil
 }
 
+// ListByUser returns the most recent jobs for the given user, newest first.
+// It filters by user_id inside the JSON payload column.
+// enforces user isolation
+func (q *Queue) ListByUser(userID int64, limit int) ([]*Job, error) {
+	rows, err := q.db.Query(
+		`SELECT id, kind, payload, state, attempts, COALESCE(error, ''), created_at, started_at, finished_at
+		 FROM jobs
+		 WHERE json_extract(payload, '$.user_id') = ?
+		 ORDER BY id DESC
+		 LIMIT ?`,
+		userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing jobs for user: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var result []*Job
+	for rows.Next() {
+		var j Job
+		if err := rows.Scan(&j.ID, &j.Kind, &j.Payload, &j.State, &j.Attempts, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
+			return nil, fmt.Errorf("scanning job row: %w", err)
+		}
+		result = append(result, &j)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating job rows: %w", err)
+	}
+	return result, nil
+}
+
 // GetByID retrieves a job by ID.
 func (q *Queue) GetByID(id int64) (*Job, error) {
 	var j Job
