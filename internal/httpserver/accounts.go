@@ -8,8 +8,10 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/hjiang/mnemosyne/internal/accounts"
 	"github.com/hjiang/mnemosyne/internal/auth"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
+	"github.com/hjiang/mnemosyne/internal/backup/policy"
 	"github.com/hjiang/mnemosyne/internal/scheduler"
 )
 
@@ -75,10 +77,28 @@ func (s *Server) accountFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse policy JSON for each folder so the template can render form state.
+	type folderView struct {
+		*accounts.Folder
+		PolicyType string
+		PolicyN    int
+		PolicyDays int
+	}
+	views := make([]folderView, len(folders))
+	for i, f := range folders {
+		fv := folderView{Folder: f, PolicyType: "all"}
+		if cfg, err := policy.ParseConfig(f.PolicyJSON); err == nil {
+			fv.PolicyType = cfg.LeaveOnServer
+			fv.PolicyN = cfg.N
+			fv.PolicyDays = cfg.Days
+		}
+		views[i] = fv
+	}
+
 	s.render(w, "folders.html", map[string]any{
 		"Title":   fmt.Sprintf("Folders — %s", acct.Label),
 		"Account": acct,
-		"Folders": folders,
+		"Folders": views,
 	})
 }
 
@@ -105,6 +125,66 @@ func (s *Server) folderToggle(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	enabled := r.FormValue("enabled") == "on"
 	if err := s.accounts.SetFolderEnabled(folderID, enabled); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", accountID), http.StatusSeeOther)
+}
+
+func (s *Server) folderPolicyUpdate(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	accountID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Verify account ownership.
+	if _, err := s.accounts.GetByID(accountID, userID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	folderID, err := strconv.ParseInt(chi.URLParam(r, "folderID"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	policyType := r.FormValue("policy_type")
+
+	cfg := policy.Config{LeaveOnServer: policyType}
+	switch policyType {
+	case "all":
+		// No extra fields needed.
+	case "newest_n":
+		n, err := strconv.Atoi(r.FormValue("policy_n"))
+		if err != nil || n < 1 {
+			http.Error(w, "N must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		cfg.N = n
+	case "younger_than":
+		days, err := strconv.Atoi(r.FormValue("policy_days"))
+		if err != nil || days < 1 {
+			http.Error(w, "Days must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		cfg.Days = days
+	default:
+		http.Error(w, "Invalid policy type", http.StatusBadRequest)
+		return
+	}
+
+	policyJSON, err := json.Marshal(cfg)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.accounts.SetFolderPolicy(folderID, string(policyJSON)); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

@@ -268,6 +268,25 @@ func TestRepo_DBErrors(t *testing.T) {
 	if err := repo.SetLastSyncAt(1, 1); err == nil {
 		t.Error("expected SetLastSyncAt error on closed DB")
 	}
+	if err := repo.SetFolderPolicy(1, `{"leave_on_server":"all"}`); err == nil {
+		t.Error("expected SetFolderPolicy error on closed DB")
+	}
+}
+
+func TestSetFolderPolicy(t *testing.T) {
+	env := newTestEnv(t)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true)
+	folder, _ := env.repo.CreateFolder(acct.ID, "INBOX")
+
+	newPolicy := `{"leave_on_server":"newest_n","n":50}`
+	if err := env.repo.SetFolderPolicy(folder.ID, newPolicy); err != nil {
+		t.Fatal(err)
+	}
+
+	folders, _ := env.repo.ListFolders(acct.ID)
+	if folders[0].PolicyJSON != newPolicy {
+		t.Errorf("PolicyJSON = %q, want %q", folders[0].PolicyJSON, newPolicy)
+	}
 }
 
 func TestCreateFolder_Idempotent(t *testing.T) {

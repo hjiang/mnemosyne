@@ -16,19 +16,56 @@
 
     <div class="page-header">
         <h2>Folders for {{.Account.Label}}</h2>
-        <p>Toggle which folders to include in backups</p>
+        <p>Toggle which folders to include in backups and configure retention policies</p>
     </div>
 
     <article class="card" style="padding:0;overflow:hidden">
         <ul class="folder-list">
         {{range .Folders}}
-            <li class="folder-item">
-                <form method="POST" action="/accounts/{{$.Account.ID}}/folders/{{.ID}}/toggle">
-                    <label>
-                        <input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}} onchange="this.form.submit()">
-                        {{.Name}}
-                    </label>
-                </form>
+            <li class="folder-item-wrap">
+                <div class="folder-item">
+                    <form method="POST" action="/accounts/{{$.Account.ID}}/folders/{{.ID}}/toggle">
+                        <label>
+                            <input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}} onchange="this.form.submit()">
+                            {{.Name}}
+                        </label>
+                    </form>
+                    <button class="policy-toggle" type="button" onclick="togglePolicy(this)" aria-label="Configure retention policy">
+                        <span class="policy-badge">{{if eq .PolicyType "all"}}keep all{{else if eq .PolicyType "newest_n"}}keep {{.PolicyN}} newest{{else}}keep {{.PolicyDays}}d{{end}}</span>
+                    </button>
+                </div>
+                <div class="policy-panel" hidden>
+                    <form method="POST" action="/accounts/{{$.Account.ID}}/folders/{{.ID}}/policy" class="policy-form">
+                        <fieldset>
+                            <legend class="text-muted">Retention &mdash; what to leave on server after backup</legend>
+                            <label>
+                                <input type="radio" name="policy_type" value="all" {{if eq .PolicyType "all"}}checked{{end}} onchange="showPolicyFields(this)">
+                                Keep all messages
+                            </label>
+                            <label>
+                                <input type="radio" name="policy_type" value="newest_n" {{if eq .PolicyType "newest_n"}}checked{{end}} onchange="showPolicyFields(this)">
+                                Keep newest N messages
+                            </label>
+                            <div class="policy-field" data-for="newest_n" {{if ne .PolicyType "newest_n"}}hidden{{end}}>
+                                <label>
+                                    N
+                                    <input type="number" name="policy_n" min="1" value="{{if .PolicyN}}{{.PolicyN}}{{else}}100{{end}}" class="policy-input">
+                                </label>
+                            </div>
+                            <label>
+                                <input type="radio" name="policy_type" value="younger_than" {{if eq .PolicyType "younger_than"}}checked{{end}} onchange="showPolicyFields(this)">
+                                Keep messages younger than N days
+                            </label>
+                            <div class="policy-field" data-for="younger_than" {{if ne .PolicyType "younger_than"}}hidden{{end}}>
+                                <label>
+                                    Days
+                                    <input type="number" name="policy_days" min="1" value="{{if .PolicyDays}}{{.PolicyDays}}{{else}}30{{end}}" class="policy-input">
+                                </label>
+                            </div>
+                        </fieldset>
+                        <button type="submit" class="policy-save">Save</button>
+                    </form>
+                </div>
             </li>
         {{end}}
         </ul>
@@ -36,5 +73,17 @@
 
     <p><a href="/accounts">&larr; Back to accounts</a></p>
 </main>
+<script>
+function togglePolicy(btn) {
+    var panel = btn.closest('.folder-item-wrap').querySelector('.policy-panel');
+    panel.hidden = !panel.hidden;
+}
+function showPolicyFields(radio) {
+    var form = radio.closest('form');
+    form.querySelectorAll('.policy-field').forEach(function(el) {
+        el.hidden = el.getAttribute('data-for') !== radio.value;
+    });
+}
+</script>
 </body>
 </html>

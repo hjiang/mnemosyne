@@ -73,6 +73,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		r.Post("/accounts", s.accountCreate)
 		r.Get("/accounts/{id}/folders", s.accountFolders)
 		r.Post("/accounts/{id}/folders/{folderID}/toggle", s.folderToggle)
+		r.Post("/accounts/{id}/folders/{folderID}/policy", s.folderPolicyUpdate)
 		r.Post("/accounts/{id}/backup", s.backupRun)
 		r.Get("/search", s.searchHandler)
 		r.Post("/export", s.exportHandler)

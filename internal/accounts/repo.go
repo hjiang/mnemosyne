@@ -195,6 +195,15 @@ func (r *Repo) SetLastSeenUID(folderID int64, uid uint32) error {
 	return nil
 }
 
+// SetFolderPolicy updates the retention policy JSON for a folder.
+func (r *Repo) SetFolderPolicy(folderID int64, policyJSON string) error {
+	_, err := r.db.Exec("UPDATE imap_folders SET policy_json = ? WHERE id = ?", policyJSON, folderID)
+	if err != nil {
+		return fmt.Errorf("updating policy_json: %w", err)
+	}
+	return nil
+}
+
 // SetLastSyncAt records when the account was last synced.
 func (r *Repo) SetLastSyncAt(accountID int64, ts int64) error {
 	_, err := r.db.Exec("UPDATE imap_accounts SET last_sync_at = ? WHERE id = ?", ts, accountID)
