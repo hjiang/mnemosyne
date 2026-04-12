@@ -115,9 +115,20 @@ Gmail's IMAP maps labels to folders. Common ones to back up: `INBOX`, `[Gmail]/S
 
 ### Updating
 
+**Using the Unraid Docker UI:** Click the container icon and select **Update**. Unraid pulls the new image and recreates the container automatically.
+
+**Using the CLI:**
+
 ```bash
 docker pull ghcr.io/hjiang/mnemosyne:latest
-docker restart mnemosyne
+docker stop mnemosyne
+docker rm mnemosyne
+docker run -d \
+  --name mnemosyne \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v /mnt/user/appdata/mnemosyne:/var/lib/mnemosyne \
+  ghcr.io/hjiang/mnemosyne:latest
 ```
 
 Migrations run automatically on startup. Your data in `/mnt/user/appdata/mnemosyne` is preserved across updates.
