@@ -137,7 +137,13 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, "home.html", map[string]any{"Title": "Home", "Email": u.Email})
+
+	data := map[string]any{"Title": "Home", "Email": u.Email}
+	if s.accounts != nil {
+		accts, _ := s.accounts.List(userID)
+		data["Accounts"] = accts
+	}
+	s.render(w, "home.html", data)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {

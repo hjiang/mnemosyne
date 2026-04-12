@@ -11,9 +11,38 @@
 <main class="container">
     <nav>
         <ul><li><strong>Mnemosyne</strong></li></ul>
-        <ul><li>{{.Email}}</li><li><form method="POST" action="/logout" style="margin:0"><button type="submit" class="outline">Log out</button></form></li></ul>
+        <ul>
+            <li><a href="/search">Search</a></li>
+            <li><a href="/accounts">Accounts</a></li>
+            <li>{{.Email}}</li>
+            <li><form method="POST" action="/logout" style="margin:0"><button type="submit" class="outline">Log out</button></form></li>
+        </ul>
     </nav>
-    <p>Welcome to Mnemosyne. More features coming soon.</p>
+
+    <h2>Dashboard</h2>
+
+    <form action="/search" method="GET" role="search" style="margin-bottom:2em">
+        <input type="search" name="q" placeholder="Search your email... (e.g. from:alice has:attachment budget)">
+        <button type="submit">Search</button>
+    </form>
+
+    {{if .Accounts}}
+    <h3>Accounts</h3>
+    {{range .Accounts}}
+    <article>
+        <header>
+            <strong>{{.Label}}</strong>
+            <small> &mdash; {{.Host}}:{{.Port}} ({{.Username}})</small>
+        </header>
+        <a href="/accounts/{{.ID}}/folders" role="button" class="outline">Folders</a>
+        <form method="POST" action="/accounts/{{.ID}}/backup" style="display:inline;margin-left:0.5em">
+            <button type="submit" class="outline">Backup now</button>
+        </form>
+    </article>
+    {{end}}
+    {{else}}
+    <p>No IMAP accounts configured yet. <a href="/accounts">Add one</a> to get started.</p>
+    {{end}}
 </main>
 </body>
 </html>
