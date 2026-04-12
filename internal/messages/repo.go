@@ -198,6 +198,85 @@ func (r *Repo) ListByFolder(folderID int64, userID int64) ([]*Message, error) {
 	return msgs, rows.Err()
 }
 
+// ListByFolderPaged returns a page of messages in a folder, ordered by date descending.
+// enforces user isolation
+func (r *Repo) ListByFolderPaged(folderID, userID int64, limit, offset int) ([]*Message, error) {
+	rows, err := r.db.Query(
+		`SELECT m.hash, m.user_id, m.message_id, m.from_addr, m.to_addrs, m.cc_addrs,
+		        m.subject, m.date, m.size, m.has_attachments, m.body_text
+		 FROM messages m
+		 JOIN message_locations ml ON ml.message_hash = m.hash
+		 WHERE ml.folder_id = ? AND m.user_id = ?
+		 ORDER BY m.date DESC
+		 LIMIT ? OFFSET ?`,
+		folderID, userID, limit, offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing by folder paged: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var msgs []*Message
+	for rows.Next() {
+		var m Message
+		var hasAtt int
+		if err := rows.Scan(&m.Hash, &m.UserID, &m.MessageID, &m.FromAddr, &m.ToAddrs, &m.CcAddrs,
+			&m.Subject, &m.Date, &m.Size, &hasAtt, &m.BodyText); err != nil {
+			return nil, fmt.Errorf("scanning message: %w", err)
+		}
+		m.HasAttachments = hasAtt == 1
+		msgs = append(msgs, &m)
+	}
+	return msgs, rows.Err()
+}
+
+// CountByFolder returns the number of messages in a folder for a user.
+// enforces user isolation
+func (r *Repo) CountByFolder(folderID, userID int64) (int, error) {
+	var count int
+	err := r.db.QueryRow(
+		`SELECT COUNT(*)
+		 FROM message_locations ml
+		 JOIN messages m ON m.hash = ml.message_hash
+		 WHERE ml.folder_id = ? AND m.user_id = ?`,
+		folderID, userID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting by folder: %w", err)
+	}
+	return count, nil
+}
+
+// CountByFoldersForUser returns message counts for all folders belonging to a user.
+// enforces user isolation
+func (r *Repo) CountByFoldersForUser(userID int64) (map[int64]int, error) {
+	rows, err := r.db.Query(
+		`SELECT ml.folder_id, COUNT(*)
+		 FROM message_locations ml
+		 JOIN messages m ON m.hash = ml.message_hash
+		 JOIN imap_folders f ON f.id = ml.folder_id
+		 JOIN imap_accounts a ON a.id = f.account_id
+		 WHERE a.user_id = ?
+		 GROUP BY ml.folder_id`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("counting by folders: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	counts := make(map[int64]int)
+	for rows.Next() {
+		var folderID int64
+		var count int
+		if err := rows.Scan(&folderID, &count); err != nil {
+			return nil, fmt.Errorf("scanning folder count: %w", err)
+		}
+		counts[folderID] = count
+	}
+	return counts, rows.Err()
+}
+
 // CountLocationsByHash counts how many locations reference a given message hash.
 func (r *Repo) CountLocationsByHash(hash []byte) (int, error) {
 	var count int

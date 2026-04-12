@@ -343,3 +343,117 @@ func TestInsertLocation_Idempotent(t *testing.T) {
 		t.Fatalf("expected idempotent insert, got %v", err)
 	}
 }
+
+func TestListByFolderPaged(t *testing.T) {
+	repo := newTestRepo(t)
+
+	// Insert 5 messages with increasing dates into folder 1.
+	for i := range 5 {
+		hash := testHash("paged-" + string(rune('a'+i)))
+		date := int64(1700000000 + i*100)
+		_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "msg" + string(rune('a'+i)), Date: &date, Size: 10})
+		_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: uint32(i + 1)})
+	}
+
+	// First page of 2.
+	msgs, err := repo.ListByFolderPaged(1, 1, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("page 1: len = %d, want 2", len(msgs))
+	}
+	// Date DESC: newest first.
+	if msgs[0].Subject != "msge" {
+		t.Errorf("page 1 first = %q, want msge", msgs[0].Subject)
+	}
+
+	// Second page of 2.
+	msgs, err = repo.ListByFolderPaged(1, 1, 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("page 2: len = %d, want 2", len(msgs))
+	}
+
+	// Third page: only 1 remaining.
+	msgs, err = repo.ListByFolderPaged(1, 1, 2, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("page 3: len = %d, want 1", len(msgs))
+	}
+}
+
+func TestListByFolderPaged_UserIsolation(t *testing.T) {
+	repo := newTestRepo(t)
+	hash := testHash("paged-iso")
+	date := int64(1700000000)
+
+	_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "x", Date: &date, Size: 10})
+	_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: 1})
+
+	msgs, _ := repo.ListByFolderPaged(1, 2, 50, 0)
+	if len(msgs) != 0 {
+		t.Errorf("user 2 sees %d messages, want 0", len(msgs))
+	}
+}
+
+func TestCountByFolder(t *testing.T) {
+	repo := newTestRepo(t)
+	for i := range 3 {
+		hash := testHash("count-" + string(rune('a'+i)))
+		date := int64(1700000000 + i)
+		_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "x", Date: &date, Size: 10})
+		_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: uint32(i + 1)})
+	}
+
+	count, err := repo.CountByFolder(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Errorf("count = %d, want 3", count)
+	}
+
+	// Wrong user sees 0.
+	count, _ = repo.CountByFolder(1, 2)
+	if count != 0 {
+		t.Errorf("user 2 count = %d, want 0", count)
+	}
+}
+
+func TestCountByFoldersForUser(t *testing.T) {
+	repo := newTestRepo(t)
+
+	// 2 messages in folder 1, 1 in folder 2.
+	for i := range 3 {
+		hash := testHash("fcount-" + string(rune('a'+i)))
+		date := int64(1700000000 + i)
+		_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "x", Date: &date, Size: 10})
+		folderID := int64(1)
+		if i == 2 {
+			folderID = 2
+		}
+		_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: folderID, UID: uint32(i + 1)})
+	}
+
+	counts, err := repo.CountByFoldersForUser(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[1] != 2 {
+		t.Errorf("folder 1 count = %d, want 2", counts[1])
+	}
+	if counts[2] != 1 {
+		t.Errorf("folder 2 count = %d, want 1", counts[2])
+	}
+
+	// User 2 has no messages.
+	counts, _ = repo.CountByFoldersForUser(2)
+	if len(counts) != 0 {
+		t.Errorf("user 2 counts = %d entries, want 0", len(counts))
+	}
+}

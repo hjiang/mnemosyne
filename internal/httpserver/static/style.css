@@ -525,6 +525,161 @@ a.result-link:hover .result-card {
     margin-bottom: 0;
 }
 
+/* ── Browse ─────────────────────────────────── */
+
+main.container:has(.browse-page) {
+    max-width: 1280px;
+}
+
+.browse-page {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 1.5rem;
+}
+
+.browse-sidebar {
+    border-right: 1px solid var(--mnemosyne-border);
+    padding-right: 1rem;
+    max-height: calc(100vh - 8rem);
+    overflow-y: auto;
+    position: sticky;
+    top: 1rem;
+}
+
+.browse-sidebar details {
+    margin-bottom: 0.5rem;
+    border: none;
+}
+
+.browse-account-header {
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0.5rem 0;
+    cursor: pointer;
+    list-style: none;
+}
+
+.browse-account-header::-webkit-details-marker {
+    display: none;
+}
+
+.browse-account-header::before {
+    content: "\25B6";
+    display: inline-block;
+    font-size: 0.65rem;
+    margin-right: 0.4rem;
+    transition: transform 0.15s;
+}
+
+details[open] > .browse-account-header::before {
+    transform: rotate(90deg);
+}
+
+.browse-folder-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0.5rem 0;
+}
+
+.browse-folder-list li {
+    margin: 0;
+    padding: 0;
+}
+
+.browse-folder {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.375rem;
+    text-decoration: none;
+    color: inherit;
+    font-size: 0.875rem;
+    transition: background 0.1s;
+}
+
+.browse-folder:hover {
+    background: var(--mnemosyne-bg-subtle);
+    text-decoration: none;
+    color: inherit;
+}
+
+.browse-folder.active {
+    background: var(--mnemosyne-accent);
+    color: white;
+}
+
+.folder-count {
+    font-size: 0.75rem;
+    color: var(--mnemosyne-text-muted);
+    background: var(--mnemosyne-bg-subtle);
+    padding: 0.1rem 0.45rem;
+    border-radius: 0.75rem;
+    min-width: 1.5em;
+    text-align: center;
+}
+
+.browse-folder.active .folder-count {
+    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.browse-messages {
+    min-height: 300px;
+}
+
+.browse-folder-title {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+.browse-pagination {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--mnemosyne-border);
+}
+
+.browse-pagination a {
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.msg-subject {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.msg-date {
+    color: var(--mnemosyne-text-muted);
+    font-size: 0.8rem;
+    white-space: nowrap;
+    margin-left: 1rem;
+}
+
+.result-card header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+@media (max-width: 768px) {
+    .browse-page {
+        grid-template-columns: 1fr;
+    }
+    .browse-sidebar {
+        position: static;
+        max-height: none;
+        border-right: none;
+        border-bottom: 1px solid var(--mnemosyne-border);
+        padding-right: 0;
+        padding-bottom: 1rem;
+    }
+}
+
 /* ── Utility ────────────────────────────────── */
 
 .mt-0 { margin-top: 0; }

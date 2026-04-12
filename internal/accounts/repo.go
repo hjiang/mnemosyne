@@ -168,6 +168,23 @@ func (r *Repo) ListFolders(accountID int64) ([]*Folder, error) {
 	return folders, rows.Err()
 }
 
+// GetFolderByID retrieves a folder and verifies it belongs to the given user via the account.
+// enforces user isolation
+func (r *Repo) GetFolderByID(folderID, userID int64) (*Folder, error) {
+	var f Folder
+	err := r.db.QueryRow(
+		`SELECT f.id, f.account_id, f.name, f.enabled, f.uid_validity, f.last_seen_uid, f.policy_json
+		 FROM imap_folders f
+		 JOIN imap_accounts a ON a.id = f.account_id
+		 WHERE f.id = ? AND a.user_id = ?`,
+		folderID, userID,
+	).Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON)
+	if err != nil {
+		return nil, fmt.Errorf("getting folder by id: %w", err)
+	}
+	return &f, nil
+}
+
 // SetFolderEnabled toggles a folder's backup enabled flag.
 func (r *Repo) SetFolderEnabled(folderID int64, enabled bool) error {
 	_, err := r.db.Exec("UPDATE imap_folders SET enabled = ? WHERE id = ?", boolToInt(enabled), folderID)

@@ -1,0 +1,38 @@
+{{define "browse_messages_content"}}
+    {{if .Messages}}
+    <p class="result-count">{{.TotalCount}} message{{if gt .TotalCount 1}}s{{end}} &middot; Page {{.Page}} of {{.TotalPages}}</p>
+    {{range .Messages}}
+    <a href="/message/{{hexhash .Hash}}" class="result-link">
+    <article class="card result-card">
+        <header>
+            <strong class="msg-subject">{{.Subject}}</strong>
+            <span class="msg-date">{{.DateStr}}</span>
+        </header>
+        <div class="result-meta">{{.From}}</div>
+    </article>
+    </a>
+    {{end}}
+    {{if gt .TotalPages 1}}
+    <nav class="browse-pagination">
+        {{if gt .Page 1}}
+        <a href="/browse/{{.FolderID}}?page={{.PrevPage}}"
+           hx-get="/browse/{{.FolderID}}?page={{.PrevPage}}"
+           hx-target="#message-list"
+           hx-push-url="true">&larr; Previous</a>
+        {{else}}
+        <span></span>
+        {{end}}
+        {{if lt .Page .TotalPages}}
+        <a href="/browse/{{.FolderID}}?page={{.NextPage}}"
+           hx-get="/browse/{{.FolderID}}?page={{.NextPage}}"
+           hx-target="#message-list"
+           hx-push-url="true">Next &rarr;</a>
+        {{end}}
+    </nav>
+    {{end}}
+    {{else if .FolderID}}
+    <div class="empty-state"><p>No messages in this folder.</p></div>
+    {{else}}
+    <div class="empty-state"><p>Select a folder to view messages.</p></div>
+    {{end}}
+{{end}}

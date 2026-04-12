@@ -60,6 +60,9 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		"search.html":        parsePage("search.html"),
 		"message.html":       parsePage("message.html"),
 		"backups.html":       parsePage("backups.html"),
+		"browse.html": template.Must(template.New("layout.html").Funcs(funcMap).ParseFS(
+			templateFS, "templates/layout.html", "templates/browse.html", "templates/browse_messages.html")),
+		"browse_messages.html": parseStandalone("browse_messages.html"),
 	}
 
 	s := &Server{
@@ -91,6 +94,8 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		r.Post("/accounts/{id}/folders/{folderID}/policy", s.folderPolicyUpdate)
 		r.Post("/accounts/{id}/backup", s.backupRun)
 		r.Get("/backups", s.backupsList)
+		r.Get("/browse", s.browseHandler)
+		r.Get("/browse/{folderID}", s.browseHandler)
 		r.Get("/search", s.searchHandler)
 		r.Get("/message/{hash}", s.messageHandler)
 		r.Post("/export", s.exportHandler)
@@ -163,6 +168,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 
 var navActiveMap = map[string]string{
 	"home.html":          "home",
+	"browse.html":        "browse",
 	"search.html":        "search",
 	"message.html":       "search",
 	"accounts.html":      "accounts",

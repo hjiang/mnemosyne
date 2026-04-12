@@ -13,6 +13,7 @@
     <nav>
         <ul><li><a href="/" class="brand"><strong><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Mnemosyne</strong></a></li></ul>
         <ul>
+            <li><a href="/browse" {{if eq .NavActive "browse"}}aria-current="page"{{end}}>Browse</a></li>
             <li><a href="/search" {{if eq .NavActive "search"}}aria-current="page"{{end}}>Search</a></li>
             <li><a href="/accounts" {{if eq .NavActive "accounts"}}aria-current="page"{{end}}>Accounts</a></li>
             <li><a href="/backups" {{if eq .NavActive "backups"}}aria-current="page"{{end}}>Backups</a></li>

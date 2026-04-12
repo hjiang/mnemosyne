@@ -1,0 +1,33 @@
+{{define "content"}}
+<div class="browse-page">
+    <aside class="browse-sidebar">
+        {{if .Sidebar}}
+        {{range .Sidebar}}
+        <details open>
+            <summary class="browse-account-header">{{.Label}}</summary>
+            <ul class="browse-folder-list">
+                {{range .Folders}}
+                <li>
+                    <a href="/browse/{{.ID}}"
+                       hx-get="/browse/{{.ID}}"
+                       hx-target="#message-list"
+                       hx-push-url="true"
+                       class="browse-folder{{if .Active}} active{{end}}">
+                        <span>{{.Name}}</span>
+                        {{if .MessageCount}}<span class="folder-count">{{.MessageCount}}</span>{{end}}
+                    </a>
+                </li>
+                {{end}}
+            </ul>
+        </details>
+        {{end}}
+        {{else}}
+        <div class="empty-state"><p>No accounts configured.</p><a href="/accounts">Add an account</a></div>
+        {{end}}
+    </aside>
+    <section id="message-list" class="browse-messages">
+        {{if .FolderName}}<h3 class="browse-folder-title">{{.FolderName}}</h3>{{end}}
+        {{template "browse_messages_content" .}}
+    </section>
+</div>
+{{end}}
