@@ -12,7 +12,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	queryStr := r.URL.Query().Get("q")
 
 	if queryStr == "" {
-		s.render(w, "search.html", map[string]any{
+		s.render(w, r, "search.html", map[string]any{
 			"Title": "Search",
 			"Hint":  true,
 		})
@@ -21,7 +21,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	q, err := search.Parse(queryStr)
 	if err != nil {
-		s.render(w, "search.html", map[string]any{
+		s.render(w, r, "search.html", map[string]any{
 			"Title": "Search",
 			"Error": err.Error(),
 			"Query": queryStr,
@@ -31,7 +31,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	results, err := s.search.Search(q, userID)
 	if err != nil {
-		s.render(w, "search.html", map[string]any{
+		s.render(w, r, "search.html", map[string]any{
 			"Title": "Search",
 			"Error": "Search failed: " + err.Error(),
 			"Query": queryStr,
@@ -39,7 +39,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.render(w, "search.html", map[string]any{
+	s.render(w, r, "search.html", map[string]any{
 		"Title":   "Search",
 		"Query":   queryStr,
 		"Results": results,

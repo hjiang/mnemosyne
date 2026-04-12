@@ -1,26 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Mnemosyne</title>
-    <link rel="stylesheet" href="/static/pico.min.css">
-    <link rel="stylesheet" href="/static/style.css">
-    <script src="/static/htmx.min.js" defer></script>
-</head>
-<body>
-<main class="container">
-    <nav>
-        <ul><li><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Mnemosyne</strong></li></ul>
-        <ul>
-            <li><a href="/search">Search</a></li>
-            <li><a href="/accounts">Accounts</a></li>
-            <li><a href="/backups">Backups</a></li>
-            <li><span class="text-muted">{{.Email}}</span></li>
-            <li><form method="POST" action="/logout"><button type="submit" class="outline secondary">Log out</button></form></li>
-        </ul>
-    </nav>
-
+{{define "content"}}
     <div class="page-header">
         <h2>Dashboard</h2>
     </div>
@@ -52,6 +30,4 @@
         <a href="/accounts" role="button">Add an account</a>
     </div>
     {{end}}
-</main>
-</body>
-</html>
+{{end}}

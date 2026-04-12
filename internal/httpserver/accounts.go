@@ -22,7 +22,7 @@ func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, "accounts.html", map[string]any{"Title": "Accounts", "Accounts": accts})
+	s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Accounts": accts})
 }
 
 func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
@@ -38,13 +38,13 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		s.render(w, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Invalid port."})
+		s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Invalid port."})
 		return
 	}
 
 	acct, err := s.accounts.Create(userID, label, host, port, username, password, useTLS)
 	if err != nil {
-		s.render(w, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Failed to create account."})
+		s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Failed to create account."})
 		return
 	}
 
@@ -95,7 +95,7 @@ func (s *Server) accountFolders(w http.ResponseWriter, r *http.Request) {
 		views[i] = fv
 	}
 
-	s.render(w, "folders.html", map[string]any{
+	s.render(w, r, "folders.html", map[string]any{
 		"Title":   fmt.Sprintf("Folders — %s", acct.Label),
 		"Account": acct,
 		"Folders": views,
@@ -215,7 +215,7 @@ func (s *Server) backupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.render(w, "backup_result.html", map[string]any{
+	s.render(w, r, "backup_result.html", map[string]any{
 		"Title":  "Backup",
 		"Status": "Backup job enqueued. It will run in the background.",
 	})

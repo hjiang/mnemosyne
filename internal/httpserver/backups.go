@@ -68,7 +68,7 @@ func (s *Server) backupsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, "backups.html", map[string]any{
+	s.render(w, r, "backups.html", map[string]any{
 		"Title": "Backup History",
 		"Jobs":  views,
 	})

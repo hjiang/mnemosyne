@@ -85,7 +85,7 @@ The project uses golangci-lint v2 with: errcheck, govet, staticcheck, gosec, goc
 
 ### Templates
 
-Self-contained HTML per page (no base+content template pattern). Stored in `internal/httpserver/templates/`. Registered in the `templates` map in `server.go:New()`.
+Authenticated pages extend `layout.html` via `{{define "content"}}`. Login is self-contained (no layout). Layout is parsed alongside each page template via `ParseFS`. Nav active state is auto-injected by `render()` based on template name (`navActiveMap` in `server.go`). Pages needing extra scripts use `{{define "scripts"}}`. Stored in `internal/httpserver/templates/`. Registered in the `templates` map in `server.go:New()`.
 
 ### IMAP Testing
 

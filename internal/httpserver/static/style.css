@@ -43,9 +43,15 @@ nav {
     margin-bottom: 2rem;
 }
 
-nav .brand {
+nav a.brand {
+    color: inherit;
     font-size: 1.25rem;
     letter-spacing: -0.02em;
+}
+
+nav a.brand:hover {
+    color: inherit;
+    text-decoration: none;
 }
 
 nav .brand svg {

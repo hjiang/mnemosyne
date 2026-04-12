@@ -42,7 +42,7 @@ func (s *Server) messageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.render(w, "message.html", map[string]any{
+	s.render(w, r, "message.html", map[string]any{
 		"Title":       msg.Subject,
 		"Message":     msg,
 		"DateStr":     dateStr,

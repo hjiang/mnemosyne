@@ -44,18 +44,22 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 	funcMap := template.FuncMap{
 		"hexhash": hex.EncodeToString,
 	}
-	parse := func(name string) *template.Template {
+	parsePage := func(name string) *template.Template {
+		return template.Must(template.New("layout.html").Funcs(funcMap).ParseFS(
+			templateFS, "templates/layout.html", "templates/"+name))
+	}
+	parseStandalone := func(name string) *template.Template {
 		return template.Must(template.New(name).Funcs(funcMap).ParseFS(templateFS, "templates/"+name))
 	}
 	templates := map[string]*template.Template{
-		"login.html":         parse("login.html"),
-		"home.html":          parse("home.html"),
-		"accounts.html":      parse("accounts.html"),
-		"folders.html":       parse("folders.html"),
-		"backup_result.html": parse("backup_result.html"),
-		"search.html":        parse("search.html"),
-		"message.html":       parse("message.html"),
-		"backups.html":       parse("backups.html"),
+		"login.html":         parseStandalone("login.html"),
+		"home.html":          parsePage("home.html"),
+		"accounts.html":      parsePage("accounts.html"),
+		"folders.html":       parsePage("folders.html"),
+		"backup_result.html": parsePage("backup_result.html"),
+		"search.html":        parsePage("search.html"),
+		"message.html":       parsePage("message.html"),
+		"backups.html":       parsePage("backups.html"),
 	}
 
 	s := &Server{
@@ -100,8 +104,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
 }
 
-func (s *Server) loginForm(w http.ResponseWriter, _ *http.Request) {
-	s.render(w, "login.html", map[string]any{"Title": "Log in", "Error": ""})
+func (s *Server) loginForm(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "login.html", map[string]any{"Title": "Log in", "Error": ""})
 }
 
 func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -111,12 +115,12 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	u, err := s.users.GetByEmail(email)
 	if err != nil {
-		s.render(w, "login.html", map[string]any{"Title": "Log in", "Error": "Invalid email or password."})
+		s.render(w, r, "login.html", map[string]any{"Title": "Log in", "Error": "Invalid email or password."})
 		return
 	}
 
 	if err := auth.VerifyPassword(u.PasswordHash, password); err != nil {
-		s.render(w, "login.html", map[string]any{"Title": "Log in", "Error": "Invalid email or password."})
+		s.render(w, r, "login.html", map[string]any{"Title": "Log in", "Error": "Invalid email or password."})
 		return
 	}
 
@@ -149,25 +153,39 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
-	u, err := s.users.GetByID(userID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	data := map[string]any{"Title": "Home", "Email": u.Email}
+	data := map[string]any{"Title": "Home"}
 	if s.accounts != nil {
 		accts, _ := s.accounts.List(userID)
 		data["Accounts"] = accts
 	}
-	s.render(w, "home.html", data)
+	s.render(w, r, "home.html", data)
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
+var navActiveMap = map[string]string{
+	"home.html":          "home",
+	"search.html":        "search",
+	"message.html":       "search",
+	"accounts.html":      "accounts",
+	"folders.html":       "accounts",
+	"backups.html":       "backups",
+	"backup_result.html": "backups",
+}
+
+func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
 	tmpl, ok := s.templates[name]
 	if !ok {
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
+	}
+	if _, exists := data["NavActive"]; !exists {
+		data["NavActive"] = navActiveMap[name]
+	}
+	if _, exists := data["Email"]; !exists {
+		if userID := auth.UserIDFromContext(r.Context()); userID != 0 {
+			if u, err := s.users.GetByID(userID); err == nil {
+				data["Email"] = u.Email
+			}
+		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.Execute(w, data); err != nil {
