@@ -2,11 +2,13 @@ package httpserver
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hjiang/mnemosyne/internal/auth"
+	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
 )
 
 func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
@@ -36,13 +38,16 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.accounts.Create(userID, label, host, port, username, password, useTLS)
+	acct, err := s.accounts.Create(userID, label, host, port, username, password, useTLS)
 	if err != nil {
 		s.render(w, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Failed to create account."})
 		return
 	}
 
-	http.Redirect(w, r, "/accounts", http.StatusSeeOther)
+	// Auto-discover folders from the IMAP server.
+	go s.discoverFolders(acct.ID, host, port, username, password, useTLS)
+
+	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }
 
 func (s *Server) accountFolders(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +63,9 @@ func (s *Server) accountFolders(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+
+	// Sync folder list from the IMAP server (creates new folders, preserves existing).
+	s.discoverFolders(accountID, acct.Host, acct.Port, acct.Username, acct.Password, acct.UseTLS)
 
 	folders, err := s.accounts.ListFolders(accountID)
 	if err != nil {
@@ -131,4 +139,27 @@ func (s *Server) backupRun(w http.ResponseWriter, r *http.Request) {
 		"Title":  "Backup Result",
 		"Status": status,
 	})
+}
+
+func (s *Server) discoverFolders(accountID int64, host string, port int, username, password string, useTLS bool) {
+	addr := fmt.Sprintf("%s:%d", host, port)
+	client, err := imapwrap.Dial(addr, username, password, useTLS)
+	if err != nil {
+		log.Printf("folder discovery for account %d: connect failed: %v", accountID, err)
+		return
+	}
+	defer client.Close() //nolint:errcheck
+
+	names, err := client.ListFolders()
+	if err != nil {
+		log.Printf("folder discovery for account %d: list failed: %v", accountID, err)
+		return
+	}
+
+	for _, name := range names {
+		if _, err := s.accounts.CreateFolder(accountID, name); err != nil {
+			log.Printf("folder discovery for account %d: creating %q: %v", accountID, name, err)
+		}
+	}
+	log.Printf("folder discovery for account %d: found %d folders", accountID, len(names))
 }
