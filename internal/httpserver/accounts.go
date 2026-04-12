@@ -145,21 +145,21 @@ func (s *Server) discoverFolders(accountID int64, host string, port int, usernam
 	addr := fmt.Sprintf("%s:%d", host, port)
 	client, err := imapwrap.Dial(addr, username, password, useTLS)
 	if err != nil {
-		log.Printf("folder discovery for account %d: connect failed: %v", accountID, err)
+		log.Printf("folder discovery for account %d: connect failed: %q", accountID, err) //nolint:gosec // accountID is int, err is quoted
 		return
 	}
 	defer client.Close() //nolint:errcheck
 
 	names, err := client.ListFolders()
 	if err != nil {
-		log.Printf("folder discovery for account %d: list failed: %v", accountID, err)
+		log.Printf("folder discovery for account %d: list failed: %q", accountID, err) //nolint:gosec // accountID is int, err is quoted
 		return
 	}
 
 	for _, name := range names {
 		if _, err := s.accounts.CreateFolder(accountID, name); err != nil {
-			log.Printf("folder discovery for account %d: creating %q: %v", accountID, name, err)
+			log.Printf("folder discovery for account %d: creating %q: %q", accountID, name, err) //nolint:gosec // all values quoted
 		}
 	}
-	log.Printf("folder discovery for account %d: found %d folders", accountID, len(names))
+	log.Printf("folder discovery for account %d: found %d folders", accountID, len(names)) //nolint:gosec // no untrusted input
 }

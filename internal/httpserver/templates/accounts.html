@@ -5,34 +5,63 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} - Mnemosyne</title>
     <link rel="stylesheet" href="/static/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <main class="container">
     <nav>
-        <ul><li><strong>Mnemosyne</strong></li></ul>
+        <ul><li><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Mnemosyne</strong></li></ul>
         <ul><li><a href="/">Home</a></li></ul>
     </nav>
-    <h2>IMAP Accounts</h2>
+
+    <div class="page-header">
+        <h2>IMAP Accounts</h2>
+        <p>Manage your email accounts for backup</p>
+    </div>
+
     {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+
     {{range .Accounts}}
-    <article>
-        <header><strong>{{.Label}}</strong> ({{.Host}}:{{.Port}})</header>
-        <a href="/accounts/{{.ID}}/folders">Manage folders</a>
-        <form method="POST" action="/accounts/{{.ID}}/backup" style="display:inline;margin-left:1em">
-            <button type="submit" class="outline">Backup now</button>
-        </form>
+    <article class="card">
+        <header>
+            <strong>{{.Label}}</strong>
+        </header>
+        <span class="account-meta"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>{{.Host}}:{{.Port}}</span>
+        <div class="account-actions">
+            <a href="/accounts/{{.ID}}/folders" role="button" class="outline">Manage folders</a>
+            <form method="POST" action="/accounts/{{.ID}}/backup">
+                <button type="submit" class="outline">Backup now</button>
+            </form>
+        </div>
     </article>
     {{end}}
-    <h3>Add account</h3>
-    <form method="POST" action="/accounts">
-        <label>Label <input type="text" name="label" required></label>
-        <label>Host <input type="text" name="host" required></label>
-        <label>Port <input type="number" name="port" value="993" required></label>
-        <label>Username <input type="text" name="username" required></label>
-        <label>Password <input type="password" name="password" required></label>
-        <label><input type="checkbox" name="use_tls" checked> Use TLS</label>
-        <button type="submit">Add account</button>
-    </form>
+
+    <div class="form-section">
+        <h3>Add account</h3>
+        <form method="POST" action="/accounts">
+            <div class="form-grid">
+                <label class="full-width">Label
+                    <input type="text" name="label" placeholder="e.g. Work Gmail" required>
+                </label>
+                <label>Host
+                    <input type="text" name="host" placeholder="imap.gmail.com" required>
+                </label>
+                <label>Port
+                    <input type="number" name="port" value="993" required>
+                </label>
+                <label>Username
+                    <input type="text" name="username" placeholder="you@example.com" required>
+                </label>
+                <label>Password
+                    <input type="password" name="password" required>
+                </label>
+                <label class="full-width">
+                    <input type="checkbox" name="use_tls" checked> Use TLS
+                </label>
+            </div>
+            <button type="submit">Add account</button>
+        </form>
+    </div>
 </main>
 </body>
 </html>

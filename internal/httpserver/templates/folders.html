@@ -5,23 +5,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} - Mnemosyne</title>
     <link rel="stylesheet" href="/static/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <main class="container">
     <nav>
-        <ul><li><strong>Mnemosyne</strong></li></ul>
-        <ul><li><a href="/accounts">Accounts</a></li></ul>
+        <ul><li><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Mnemosyne</strong></li></ul>
+        <ul><li><a href="/">Home</a></li><li><a href="/accounts">Accounts</a></li></ul>
     </nav>
-    <h2>Folders for {{.Account.Label}}</h2>
-    {{range .Folders}}
-    <form method="POST" action="/accounts/{{$.Account.ID}}/folders/{{.ID}}/toggle" style="margin-bottom:0.5em">
-        <label>
-            <input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}} onchange="this.form.submit()">
-            {{.Name}}
-        </label>
-    </form>
-    {{end}}
-    <p><a href="/accounts">Back to accounts</a></p>
+
+    <div class="page-header">
+        <h2>Folders for {{.Account.Label}}</h2>
+        <p>Toggle which folders to include in backups</p>
+    </div>
+
+    <article class="card" style="padding:0;overflow:hidden">
+        <ul class="folder-list">
+        {{range .Folders}}
+            <li class="folder-item">
+                <form method="POST" action="/accounts/{{$.Account.ID}}/folders/{{.ID}}/toggle">
+                    <label>
+                        <input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}} onchange="this.form.submit()">
+                        {{.Name}}
+                    </label>
+                </form>
+            </li>
+        {{end}}
+        </ul>
+    </article>
+
+    <p><a href="/accounts">&larr; Back to accounts</a></p>
 </main>
 </body>
 </html>

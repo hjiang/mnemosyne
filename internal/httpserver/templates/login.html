@@ -5,20 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Mnemosyne — Log in</title>
     <link rel="stylesheet" href="/static/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <main class="container">
-    <article>
-        <h2>Log in</h2>
-        {{if .Error}}<p role="alert" style="color: var(--pico-del-color)">{{.Error}}</p>{{end}}
-        <form method="POST" action="/login">
-            <label for="email">Email</label>
-            <input type="email" id="email" name="email" required autofocus>
-            <label for="password">Password</label>
-            <input type="password" id="password" name="password" required>
-            <button type="submit">Log in</button>
-        </form>
-    </article>
+    <div class="login-wrapper">
+        <div class="login-card">
+            <h2>Mnemosyne</h2>
+            <p class="login-brand">Sign in to your email archive</p>
+            {{if .Error}}<p class="alert">{{.Error}}</p>{{end}}
+            <form method="POST" action="/login">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" required autofocus>
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+                <button type="submit" style="width:100%">Log in</button>
+            </form>
+        </div>
+    </div>
 </main>
 </body>
 </html>

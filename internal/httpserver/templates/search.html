@@ -5,36 +5,48 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} - Mnemosyne</title>
     <link rel="stylesheet" href="/static/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <main class="container">
     <nav>
-        <ul><li><strong>Mnemosyne</strong></li></ul>
+        <ul><li><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Mnemosyne</strong></li></ul>
         <ul><li><a href="/">Home</a></li><li><a href="/accounts">Accounts</a></li></ul>
     </nav>
-    <h2>Search</h2>
-    <form method="GET" action="/search">
-        <input type="search" name="q" value="{{.Query}}" placeholder="from:alice subject:report budget" style="width:100%">
+
+    <div class="page-header">
+        <h2>Search</h2>
+    </div>
+
+    <form method="GET" action="/search" class="search-box">
+        <input type="search" name="q" value="{{.Query}}" placeholder="from:alice subject:report budget">
         <button type="submit">Search</button>
     </form>
+
     {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+
     {{if .Hint}}
-    <p>Search your backed-up email using Gmail-style operators:</p>
-    <ul>
-        <li><code>from:</code> <code>to:</code> <code>cc:</code> — filter by address</li>
-        <li><code>subject:"exact phrase"</code> — filter by subject</li>
-        <li><code>has:attachment</code> — messages with attachments</li>
-        <li><code>before:2026-01-01</code> <code>after:2025-01-01</code> — date range</li>
-        <li><code>filename:*.pdf</code> — attachment filename</li>
-        <li>Free text is matched against the full-text index</li>
-    </ul>
+    <div class="search-hint">
+        <p><strong>Search your backed-up email using Gmail-style operators:</strong></p>
+        <ul>
+            <li><code>from:</code> <code>to:</code> <code>cc:</code> — filter by address</li>
+            <li><code>subject:"exact phrase"</code> — filter by subject</li>
+            <li><code>has:attachment</code> — messages with attachments</li>
+            <li><code>before:2026-01-01</code> <code>after:2025-01-01</code> — date range</li>
+            <li><code>filename:*.pdf</code> — attachment filename</li>
+            <li>Free text is matched against the full-text index</li>
+        </ul>
+    </div>
     {{end}}
+
     {{if .Results}}
-    <p>{{.Count}} result{{if gt .Count 1}}s{{end}}</p>
+    <p class="result-count">{{.Count}} result{{if gt .Count 1}}s{{end}}</p>
     {{range .Results}}
-    <article>
-        <header><strong>{{.Subject}}</strong></header>
-        <small>From: {{.FromAddr}} | To: {{.ToAddrs}}</small>
+    <article class="card result-card">
+        <header>
+            <strong>{{.Subject}}</strong>
+        </header>
+        <div class="result-meta">From: {{.FromAddr}} &middot; To: {{.ToAddrs}}</div>
     </article>
     {{end}}
     {{end}}
