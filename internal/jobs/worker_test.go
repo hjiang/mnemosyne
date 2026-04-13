@@ -118,7 +118,7 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	}
 }
 
-// Test 15: ReclaimStuck resets running → pending.
+// Test 15: ReclaimStuck marks running jobs as failed.
 func TestReclaimStuck(t *testing.T) {
 	q := newTestQueueForWorker(t)
 	j, _ := q.Enqueue("test", "")
@@ -138,8 +138,14 @@ func TestReclaimStuck(t *testing.T) {
 	}
 
 	got, _ = q.GetByID(j.ID)
-	if got.State != "pending" {
-		t.Errorf("state = %q, want pending", got.State)
+	if got.State != "failed" {
+		t.Errorf("state = %q, want failed", got.State)
+	}
+	if got.Error != "interrupted: process stopped while job was running" {
+		t.Errorf("error = %q, want interrupted message", got.Error)
+	}
+	if got.FinishedAt == nil {
+		t.Error("finished_at should be set")
 	}
 }
 

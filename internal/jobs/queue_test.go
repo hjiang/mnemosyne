@@ -212,3 +212,111 @@ func TestClaim_Empty(t *testing.T) {
 		t.Error("expected nil for empty queue")
 	}
 }
+
+// EnqueueIfNotActive creates a job when none exists for the account.
+func TestEnqueueIfNotActive_Success(t *testing.T) {
+	q := newTestQueue(t)
+	j, err := q.EnqueueIfNotActive("backup", `{"account_id":1,"user_id":10}`, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j == nil {
+		t.Fatal("expected a job")
+	}
+	if j.State != "pending" {
+		t.Errorf("State = %q, want pending", j.State)
+	}
+}
+
+// EnqueueIfNotActive rejects when a pending job exists for the same account.
+func TestEnqueueIfNotActive_RejectsPending(t *testing.T) {
+	q := newTestQueue(t)
+	if _, err := q.EnqueueIfNotActive("backup", `{"account_id":1,"user_id":10}`, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := q.EnqueueIfNotActive("backup", `{"account_id":1,"user_id":10}`, 1)
+	if err != ErrJobActive {
+		t.Errorf("err = %v, want ErrJobActive", err)
+	}
+}
+
+// EnqueueIfNotActive rejects when a running job exists for the same account.
+func TestEnqueueIfNotActive_RejectsRunning(t *testing.T) {
+	q := newTestQueue(t)
+	if _, err := q.EnqueueIfNotActive("backup", `{"account_id":1,"user_id":10}`, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Claim(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := q.EnqueueIfNotActive("backup", `{"account_id":1,"user_id":10}`, 1)
+	if err != ErrJobActive {
+		t.Errorf("err = %v, want ErrJobActive", err)
+	}
+}
+
+// EnqueueIfNotActive allows different accounts.
+func TestEnqueueIfNotActive_DifferentAccounts(t *testing.T) {
+	q := newTestQueue(t)
+	if _, err := q.EnqueueIfNotActive("backup", `{"account_id":1,"user_id":10}`, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := q.EnqueueIfNotActive("backup", `{"account_id":2,"user_id":10}`, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j == nil {
+		t.Fatal("expected a job for different account")
+	}
+}
+
+// EnqueueIfNotActive allows re-enqueue after previous job completes.
+func TestEnqueueIfNotActive_AfterComplete(t *testing.T) {
+	q := newTestQueue(t)
+	j1, err := q.EnqueueIfNotActive("backup", `{"account_id":1,"user_id":10}`, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Claim(); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Complete(j1.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	j2, err := q.EnqueueIfNotActive("backup", `{"account_id":1,"user_id":10}`, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j2 == nil {
+		t.Fatal("expected a new job after previous completed")
+	}
+}
+
+// UpdateProgress stores progress for a running job.
+func TestUpdateProgress(t *testing.T) {
+	q := newTestQueue(t)
+	if _, err := q.Enqueue("backup", `{"account_id":1,"user_id":10}`); err != nil {
+		t.Fatal(err)
+	}
+	j, err := q.Claim()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	progress := `{"folder":"INBOX","folder_index":1,"folder_total":3,"new_messages":5}`
+	if err := q.UpdateProgress(j.ID, progress); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := q.GetByID(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Progress != progress {
+		t.Errorf("Progress = %q, want %q", got.Progress, progress)
+	}
+}

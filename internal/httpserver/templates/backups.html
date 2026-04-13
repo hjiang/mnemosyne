@@ -11,7 +11,13 @@
             <strong>{{.AccountLabel}}</strong>
             <span class="status-badge status-{{.State}}">{{.State}}</span>
         </header>
-        <span class="account-meta">{{.CreatedAt.Format "Jan 2, 2006 3:04 PM"}}{{if .Duration}} &middot; {{.Duration}}{{end}}</span>
+        <span class="account-meta">
+            {{.CreatedAt.Format "Jan 2, 2006 3:04 PM"}}
+            {{if .StartedAt}} &middot; started {{.StartedAt}}{{end}}
+            {{if .Duration}} &middot; {{.Duration}}{{end}}
+            {{if gt .Attempts 1}} &middot; attempt {{.Attempts}}{{end}}
+        </span>
+        {{if .Progress}}<p class="job-progress">{{.Progress}}</p>{{end}}
         {{if .Error}}<p class="job-error">{{.Error}}</p>{{end}}
     </article>
     {{end}}

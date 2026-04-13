@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// ErrJobActive indicates that an active job already exists for the given account.
+var ErrJobActive = fmt.Errorf("active job already exists for this account")
+
 // Job represents a queued job.
 type Job struct {
 	ID         int64
@@ -15,6 +18,7 @@ type Job struct {
 	State      string
 	Attempts   int
 	Error      string
+	Progress   string
 	CreatedAt  int64
 	StartedAt  *int64
 	FinishedAt *int64
@@ -62,9 +66,9 @@ func (q *Queue) Claim() (*Job, error) {
 
 	var j Job
 	err = tx.QueryRow(
-		`SELECT id, kind, payload, state, attempts, COALESCE(error, ''), created_at
+		`SELECT id, kind, payload, state, attempts, COALESCE(error, ''), COALESCE(progress, ''), created_at
 		 FROM jobs WHERE state = 'pending' ORDER BY id LIMIT 1`,
-	).Scan(&j.ID, &j.Kind, &j.Payload, &j.State, &j.Attempts, &j.Error, &j.CreatedAt)
+	).Scan(&j.ID, &j.Kind, &j.Payload, &j.State, &j.Attempts, &j.Error, &j.Progress, &j.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -87,6 +91,63 @@ func (q *Queue) Claim() (*Job, error) {
 	j.Attempts++
 	j.StartedAt = &now
 	return &j, nil
+}
+
+// EnqueueIfNotActive enqueues a job only if no pending or running job exists
+// for the same account (identified by json_extract on the payload).
+// Returns ErrJobActive if an active job already exists.
+func (q *Queue) EnqueueIfNotActive(kind, payload string, accountID int64) (*Job, error) {
+	now := q.now().Unix()
+	tx, err := q.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var count int
+	err = tx.QueryRow(
+		`SELECT COUNT(*) FROM jobs
+		 WHERE kind = ? AND state IN ('pending', 'running')
+		 AND json_extract(payload, '$.account_id') = ?`,
+		kind, accountID,
+	).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("checking active jobs: %w", err)
+	}
+	if count > 0 {
+		return nil, ErrJobActive
+	}
+
+	res, err := tx.Exec(
+		"INSERT INTO jobs (kind, payload, state, created_at) VALUES (?, ?, 'pending', ?)",
+		kind, payload, now)
+	if err != nil {
+		return nil, fmt.Errorf("enqueuing job: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing enqueue: %w", err)
+	}
+
+	id, _ := res.LastInsertId()
+	return &Job{
+		ID:        id,
+		Kind:      kind,
+		Payload:   payload,
+		State:     "pending",
+		CreatedAt: now,
+	}, nil
+}
+
+// UpdateProgress stores progress information for a running job.
+func (q *Queue) UpdateProgress(jobID int64, progress string) error {
+	_, err := q.db.Exec(
+		"UPDATE jobs SET progress = ? WHERE id = ? AND state = 'running'",
+		progress, jobID)
+	if err != nil {
+		return fmt.Errorf("updating progress: %w", err)
+	}
+	return nil
 }
 
 // Complete marks a running job as done.
@@ -118,7 +179,7 @@ func (q *Queue) Fail(jobID int64, errMsg string) error {
 // enforces user isolation
 func (q *Queue) ListByUser(userID int64, limit int) ([]*Job, error) {
 	rows, err := q.db.Query(
-		`SELECT id, kind, payload, state, attempts, COALESCE(error, ''), created_at, started_at, finished_at
+		`SELECT id, kind, payload, state, attempts, COALESCE(error, ''), COALESCE(progress, ''), created_at, started_at, finished_at
 		 FROM jobs
 		 WHERE json_extract(payload, '$.user_id') = ?
 		 ORDER BY id DESC
@@ -132,7 +193,7 @@ func (q *Queue) ListByUser(userID int64, limit int) ([]*Job, error) {
 	var result []*Job
 	for rows.Next() {
 		var j Job
-		if err := rows.Scan(&j.ID, &j.Kind, &j.Payload, &j.State, &j.Attempts, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.Kind, &j.Payload, &j.State, &j.Attempts, &j.Error, &j.Progress, &j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
 			return nil, fmt.Errorf("scanning job row: %w", err)
 		}
 		result = append(result, &j)
@@ -147,9 +208,9 @@ func (q *Queue) ListByUser(userID int64, limit int) ([]*Job, error) {
 func (q *Queue) GetByID(id int64) (*Job, error) {
 	var j Job
 	err := q.db.QueryRow(
-		`SELECT id, kind, payload, state, attempts, COALESCE(error, ''), created_at, started_at, finished_at
+		`SELECT id, kind, payload, state, attempts, COALESCE(error, ''), COALESCE(progress, ''), created_at, started_at, finished_at
 		 FROM jobs WHERE id = ?`, id,
-	).Scan(&j.ID, &j.Kind, &j.Payload, &j.State, &j.Attempts, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt)
+	).Scan(&j.ID, &j.Kind, &j.Payload, &j.State, &j.Attempts, &j.Error, &j.Progress, &j.CreatedAt, &j.StartedAt, &j.FinishedAt)
 	if err != nil {
 		return nil, fmt.Errorf("getting job: %w", err)
 	}

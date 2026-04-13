@@ -525,6 +525,13 @@ a.result-link:hover .result-card {
     margin-bottom: 0;
 }
 
+.job-progress {
+    color: var(--pico-muted-color);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0;
+}
+
 /* ── Browse ─────────────────────────────────── */
 
 main.container:has(.browse-page) {

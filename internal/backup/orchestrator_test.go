@@ -93,7 +93,7 @@ func TestOrchestrator_FreshBackup(t *testing.T) {
 	folderID := enableFolder(t, env, "INBOX")
 	env.imapSrv.SeedMessages(t, "INBOX", 5)
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +116,11 @@ func TestOrchestrator_Idempotent(t *testing.T) {
 	enableFolder(t, env, "INBOX")
 	env.imapSrv.SeedMessages(t, "INBOX", 5)
 
-	if _, err := env.orchestrator.Run(env.accountID, env.userID); err != nil {
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestOrchestrator_Incremental(t *testing.T) {
 	enableFolder(t, env, "INBOX")
 	env.imapSrv.SeedMessages(t, "INBOX", 3)
 
-	if _, err := env.orchestrator.Run(env.accountID, env.userID); err != nil {
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,7 +145,7 @@ func TestOrchestrator_Incremental(t *testing.T) {
 		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
 	}
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestOrchestrator_CrossFolderDedup(t *testing.T) {
 	env.imapSrv.AppendMessage(t, "INBOX", raw)
 	env.imapSrv.AppendMessage(t, "Archive", raw)
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestOrchestrator_UIDValidityReset(t *testing.T) {
 	folderID := enableFolder(t, env, "INBOX")
 	env.imapSrv.SeedMessages(t, "INBOX", 3)
 
-	if _, err := env.orchestrator.Run(env.accountID, env.userID); err != nil {
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -216,7 +216,7 @@ func TestOrchestrator_UIDValidityReset(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestOrchestrator_Attachments(t *testing.T) {
 	raw := fmt.Sprintf("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: With attachment\r\nMessage-ID: <att@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n--%s\r\nContent-Type: text/plain\r\n\r\nBody text\r\n--%s\r\nContent-Type: application/pdf; name=\"report.pdf\"\r\nContent-Disposition: attachment; filename=\"report.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2c+PgplbmRvYmoK\r\n--%s--\r\n", boundary, boundary, boundary, boundary)
 	env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestOrchestrator_DuplicateMessageID(t *testing.T) {
 	env.imapSrv.AppendMessage(t, "INBOX", raw1)
 	env.imapSrv.AppendMessage(t, "INBOX", raw2)
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,10 +342,10 @@ func TestOrchestrator_UserIsolation(t *testing.T) {
 	folderB, _ := acctRepo.CreateFolder(acctB.ID, "INBOX")
 	_ = acctRepo.SetFolderEnabled(folderB.ID, true)
 
-	if _, err := orch.Run(acctA.ID, 1); err != nil {
+	if _, err := orch.Run(acctA.ID, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orch.Run(acctB.ID, 2); err != nil {
+	if _, err := orch.Run(acctB.ID, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -376,7 +376,7 @@ func TestOrchestrator_EmptyFolder(t *testing.T) {
 	enableFolder(t, env, "INBOX")
 	// No messages seeded.
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestOrchestrator_DisabledFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestOrchestrator_BodyTextExtracted(t *testing.T) {
 	raw := []byte("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Body test\r\nMessage-ID: <bodytest@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nHello, this is the email body.\r\n")
 	env.imapSrv.AppendMessage(t, "INBOX", raw)
 
-	_, err := env.orchestrator.Run(env.accountID, env.userID)
+	_, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestOrchestrator_BodyTextExtracted_Multipart(t *testing.T) {
 	raw := fmt.Sprintf("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Multipart body\r\nMessage-ID: <mpbody@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n--%s\r\nContent-Type: text/plain\r\n\r\nPlain text version of the email.\r\n--%s\r\nContent-Type: text/html\r\n\r\n<html><body><p>HTML version of the email.</p></body></html>\r\n--%s--\r\n", boundary, boundary, boundary, boundary)
 	env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
 
-	_, err := env.orchestrator.Run(env.accountID, env.userID)
+	_, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +555,7 @@ func TestOrchestrator_RetentionApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID)
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +581,7 @@ func TestOrchestrator_RetentionDefaultAll(t *testing.T) {
 	env.imapSrv.SeedMessages(t, "INBOX", 5)
 
 	// Default policy is "all" — no explicit SetFolderPolicy call.
-	if _, err := env.orchestrator.Run(env.accountID, env.userID); err != nil {
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -598,8 +598,48 @@ func TestOrchestrator_RetentionDefaultAll(t *testing.T) {
 // Test: Invalid account returns an error.
 func TestOrchestrator_InvalidAccount(t *testing.T) {
 	env := newTestEnv(t)
-	_, err := env.orchestrator.Run(9999, env.userID)
+	_, err := env.orchestrator.Run(9999, env.userID, nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent account")
+	}
+}
+
+// Test: Progress callback is called with correct folder counts.
+func TestOrchestrator_ProgressCallback(t *testing.T) {
+	env := newTestEnv(t)
+	enableFolder(t, env, "INBOX")
+	enableFolder(t, env, "Sent")
+	env.imapSrv.SeedMessages(t, "INBOX", 3)
+	env.imapSrv.SeedMessages(t, "Sent", 2)
+
+	var updates []Progress
+	onProgress := func(p Progress) {
+		updates = append(updates, p)
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, onProgress)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(updates) != 2 {
+		t.Fatalf("got %d progress updates, want 2", len(updates))
+	}
+
+	// First update: after first folder.
+	if updates[0].FolderIndex != 1 {
+		t.Errorf("update[0].FolderIndex = %d, want 1", updates[0].FolderIndex)
+	}
+	if updates[0].FolderTotal != 2 {
+		t.Errorf("update[0].FolderTotal = %d, want 2", updates[0].FolderTotal)
+	}
+
+	// Last update should match final result.
+	last := updates[len(updates)-1]
+	if last.FolderIndex != 2 {
+		t.Errorf("last.FolderIndex = %d, want 2", last.FolderIndex)
+	}
+	if last.NewMessages != result.NewMessages {
+		t.Errorf("last.NewMessages = %d, want %d", last.NewMessages, result.NewMessages)
 	}
 }

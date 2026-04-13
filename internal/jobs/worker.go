@@ -116,10 +116,13 @@ func (p *WorkerPool) sleep(ctx context.Context) {
 	}
 }
 
-// ReclaimStuck resets any jobs stuck in 'running' state back to 'pending'.
+// ReclaimStuck marks any jobs stuck in 'running' state as failed.
 // Call this on startup before starting workers.
 func (q *Queue) ReclaimStuck() (int64, error) {
-	res, err := q.db.Exec("UPDATE jobs SET state = 'pending', started_at = NULL WHERE state = 'running'")
+	now := q.now().Unix()
+	res, err := q.db.Exec(
+		"UPDATE jobs SET state = 'failed', error = 'interrupted: process stopped while job was running', finished_at = ? WHERE state = 'running'",
+		now)
 	if err != nil {
 		return 0, fmt.Errorf("reclaiming stuck jobs: %w", err)
 	}

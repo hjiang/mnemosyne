@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -75,8 +76,12 @@ func (s *Scheduler) EnqueueAll() error {
 			AccountID: info.AccountID,
 			UserID:    info.UserID,
 		})
-		if _, err := s.queue.Enqueue("backup", string(payload)); err != nil {
-			log.Printf("scheduler: failed to enqueue account %d: %v", info.AccountID, err)
+		if _, err := s.queue.EnqueueIfNotActive("backup", string(payload), info.AccountID); err != nil {
+			if errors.Is(err, jobs.ErrJobActive) {
+				log.Printf("scheduler: skipping account %d: active job exists", info.AccountID)
+			} else {
+				log.Printf("scheduler: failed to enqueue account %d: %v", info.AccountID, err)
+			}
 		}
 	}
 	return nil

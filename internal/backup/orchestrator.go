@@ -20,6 +20,18 @@ import (
 	"github.com/hjiang/mnemosyne/internal/messages"
 )
 
+// Progress reports the current state of a backup run.
+type Progress struct {
+	Folder       string `json:"folder"`
+	FolderIndex  int    `json:"folder_index"`
+	FolderTotal  int    `json:"folder_total"`
+	NewMessages  int    `json:"new_messages"`
+	NewLocations int    `json:"new_locations"`
+}
+
+// ProgressFunc is called after each folder sync to report progress.
+type ProgressFunc func(p Progress)
+
 // Result summarizes a backup run.
 type Result struct {
 	NewMessages  int
@@ -44,7 +56,8 @@ func NewOrchestrator(accts *accounts.Repo, msgs *messages.Repo, store *blobs.Sto
 }
 
 // Run backs up all enabled folders for the given account.
-func (o *Orchestrator) Run(accountID, userID int64) (*Result, error) {
+// If onProgress is non-nil, it is called after each folder sync.
+func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*Result, error) {
 	acct, err := o.accounts.GetByID(accountID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("loading account: %w", err)
@@ -62,13 +75,26 @@ func (o *Orchestrator) Run(accountID, userID int64) (*Result, error) {
 		return nil, fmt.Errorf("listing folders: %w", err)
 	}
 
-	result := &Result{}
-	for _, folder := range folders {
-		if !folder.Enabled {
-			continue
+	var enabled []*accounts.Folder
+	for _, f := range folders {
+		if f.Enabled {
+			enabled = append(enabled, f)
 		}
+	}
+
+	result := &Result{}
+	for i, folder := range enabled {
 		if err := o.syncFolder(client, folder, userID, result); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("folder %q: %w", folder.Name, err))
+		}
+		if onProgress != nil {
+			onProgress(Progress{
+				Folder:       folder.Name,
+				FolderIndex:  i + 1,
+				FolderTotal:  len(enabled),
+				NewMessages:  result.NewMessages,
+				NewLocations: result.NewLocations,
+			})
 		}
 	}
 

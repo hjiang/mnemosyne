@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/hjiang/mnemosyne/internal/auth"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
 	"github.com/hjiang/mnemosyne/internal/backup/policy"
+	"github.com/hjiang/mnemosyne/internal/jobs"
 	"github.com/hjiang/mnemosyne/internal/scheduler"
 )
 
@@ -210,7 +212,14 @@ func (s *Server) backupRun(w http.ResponseWriter, r *http.Request) {
 		AccountID: accountID,
 		UserID:    userID,
 	})
-	if _, err := s.queue.Enqueue("backup", string(payload)); err != nil {
+	if _, err := s.queue.EnqueueIfNotActive("backup", string(payload), accountID); err != nil {
+		if errors.Is(err, jobs.ErrJobActive) {
+			s.render(w, r, "backup_result.html", map[string]any{
+				"Title":  "Backup",
+				"Status": "A backup job is already pending or running for this account.",
+			})
+			return
+		}
 		http.Error(w, "failed to enqueue backup job", http.StatusInternalServerError)
 		return
 	}

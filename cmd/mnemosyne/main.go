@@ -114,7 +114,7 @@ func runServe() error {
 		log.Printf("reclaimed %d stuck jobs", n)
 	}
 
-	pool := jobs.NewWorkerPool(jobQueue, backupJobHandler(orch), cfg.Backup.MaxConcurrent, 3)
+	pool := jobs.NewWorkerPool(jobQueue, backupJobHandler(orch, jobQueue), cfg.Backup.MaxConcurrent, 3)
 	pool.Start()
 
 	// Schedule periodic backups if configured.
@@ -226,13 +226,20 @@ func backfillBodyText(msgRepo *messages.Repo, blobStore *blobs.Store) {
 	}
 }
 
-func backupJobHandler(orch *backup.Orchestrator) jobs.Handler {
+func backupJobHandler(orch *backup.Orchestrator, queue *jobs.Queue) jobs.Handler {
 	return func(_ context.Context, job *jobs.Job) error {
 		var p scheduler.BackupPayload
 		if err := json.Unmarshal([]byte(job.Payload), &p); err != nil {
 			return fmt.Errorf("parsing backup payload: %w", err)
 		}
-		result, err := orch.Run(p.AccountID, p.UserID)
+		onProgress := func(prog backup.Progress) {
+			progressJSON, err := json.Marshal(prog)
+			if err != nil {
+				return
+			}
+			_ = queue.UpdateProgress(job.ID, string(progressJSON))
+		}
+		result, err := orch.Run(p.AccountID, p.UserID, onProgress)
 		if err != nil {
 			return err
 		}
