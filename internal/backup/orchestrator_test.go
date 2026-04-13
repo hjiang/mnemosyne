@@ -17,6 +17,23 @@ import (
 	"github.com/hjiang/mnemosyne/internal/testimap"
 )
 
+// failingFetchClient wraps a real IMAPClient but returns errors for specific UIDs
+// on FetchBody calls, simulating messages deleted between envelope listing and body fetch.
+// It also counts FetchBody calls to verify skip behavior.
+type failingFetchClient struct {
+	IMAPClient
+	failUIDs       map[uint32]bool
+	fetchBodyCalls int
+}
+
+func (f *failingFetchClient) FetchBody(uid uint32) ([]byte, error) {
+	f.fetchBodyCalls++
+	if f.failUIDs[uid] {
+		return nil, fmt.Errorf("no message with UID %d", uid)
+	}
+	return f.IMAPClient.FetchBody(uid)
+}
+
 type testEnv struct {
 	orchestrator *Orchestrator
 	accountsRepo *accounts.Repo
@@ -680,4 +697,148 @@ func TestOrchestrator_ProgressCallback(t *testing.T) {
 	if last.NewMessages != result.NewMessages {
 		t.Errorf("last.NewMessages = %d, want %d", last.NewMessages, result.NewMessages)
 	}
+}
+
+// Test: LastSeenUID must not advance past UIDs that failed to fetch.
+// This reproduces the bug where a message deleted between FetchEnvelopes and
+// FetchBody causes maxUID to advance past it, permanently skipping the message.
+func TestOrchestrator_LastSeenUID_NotAdvancedPastFailures(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.imapSrv.SeedMessages(t, "INBOX", 5) // UIDs 1-5
+
+	// Connect a real client, then wrap it to fail on UID 3.
+	realClient := connectTestIMAP(t, env.imapSrv)
+	wrapped := &failingFetchClient{
+		IMAPClient: realClient,
+		failUIDs:   map[uint32]bool{3: true},
+	}
+
+	// Get the folder record for syncFolder.
+	folders, err := env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var folder *accounts.Folder
+	for _, f := range folders {
+		if f.ID == folderID {
+			folder = f
+			break
+		}
+	}
+	if folder == nil {
+		t.Fatal("folder not found")
+	}
+
+	result := &Result{}
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have 1 error (UID 3 failed).
+	if len(result.Errors) != 1 {
+		t.Errorf("Errors = %d, want 1", len(result.Errors))
+	}
+
+	// Should have stored 4 messages (UIDs 1,2,4,5).
+	if result.NewMessages != 4 {
+		t.Errorf("NewMessages = %d, want 4", result.NewMessages)
+	}
+
+	// Critical assertion: LastSeenUID must be 2 (last contiguously successful UID),
+	// NOT 5 (the max UID). This ensures UID 3 will be retried on the next run.
+	updatedFolder, err := env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range updatedFolder {
+		if f.ID == folderID {
+			if f.LastSeenUID != 2 {
+				t.Errorf("LastSeenUID = %d, want 2 (should not advance past failed UID 3)", f.LastSeenUID)
+			}
+			return
+		}
+	}
+	t.Fatal("folder not found after sync")
+}
+
+// Test: Retry after partial failure skips already-stored messages.
+func TestOrchestrator_RetrySkipsAlreadyStored(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.imapSrv.SeedMessages(t, "INBOX", 5)
+
+	realClient := connectTestIMAP(t, env.imapSrv)
+
+	// First run: UID 3 fails.
+	wrapped := &failingFetchClient{
+		IMAPClient: realClient,
+		failUIDs:   map[uint32]bool{3: true},
+	}
+	folders, err := env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var folder *accounts.Folder
+	for _, f := range folders {
+		if f.ID == folderID {
+			folder = f
+			break
+		}
+	}
+
+	result := &Result{}
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+		t.Fatal(err)
+	}
+	if result.NewMessages != 4 {
+		t.Fatalf("first run: NewMessages = %d, want 4", result.NewMessages)
+	}
+
+	// Second run: no failures. Reload folder to get updated LastSeenUID.
+	folders, err = env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range folders {
+		if f.ID == folderID {
+			folder = f
+			break
+		}
+	}
+
+	wrapped2 := &failingFetchClient{
+		IMAPClient: realClient,
+		failUIDs:   map[uint32]bool{},
+	}
+	result2 := &Result{}
+	if err := env.orchestrator.syncFolder(wrapped2, folder, env.userID, result2); err != nil {
+		t.Fatal(err)
+	}
+
+	// UID 3 should be fetched and stored. UIDs 1,2,4,5 should be skipped (already stored).
+	if wrapped2.fetchBodyCalls != 1 {
+		t.Errorf("retry fetchBodyCalls = %d, want 1 (only UID 3 should be fetched)", wrapped2.fetchBodyCalls)
+	}
+	if result2.NewMessages != 1 {
+		t.Errorf("retry NewMessages = %d, want 1", result2.NewMessages)
+	}
+	if len(result2.Errors) != 0 {
+		t.Errorf("retry Errors = %d, want 0", len(result2.Errors))
+	}
+
+	// LastSeenUID should now be 5 (all messages stored).
+	folders, err = env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range folders {
+		if f.ID == folderID {
+			if f.LastSeenUID != 5 {
+				t.Errorf("LastSeenUID after retry = %d, want 5", f.LastSeenUID)
+			}
+			return
+		}
+	}
+	t.Fatal("folder not found")
 }

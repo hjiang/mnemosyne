@@ -91,6 +91,17 @@ func (r *Repo) InsertLocation(loc *Location) error {
 	return nil
 }
 
+// LocationExistsByFolderAndUID reports whether a location record exists for the given folder and UID.
+// enforces user isolation (folder_id is scoped to an account which is scoped to a user)
+func (r *Repo) LocationExistsByFolderAndUID(folderID int64, uid uint32) (bool, error) {
+	var count int
+	err := r.db.QueryRow(
+		"SELECT COUNT(1) FROM message_locations WHERE folder_id = ? AND uid = ?",
+		folderID, uid,
+	).Scan(&count)
+	return count > 0, err
+}
+
 // InsertAttachment records an attachment for a message.
 func (r *Repo) InsertAttachment(att *Attachment) error {
 	res, err := r.db.Exec(

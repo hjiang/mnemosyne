@@ -4,15 +4,20 @@ import (
 	"fmt"
 	"time"
 
-	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
 	"github.com/hjiang/mnemosyne/internal/backup/policy"
 )
+
+// RetentionClient abstracts the IMAP operations needed for retention.
+type RetentionClient interface {
+	MarkDeleted(uids []uint32) error
+	Expunge() error
+}
 
 // ApplyRetention runs the retention policy on a folder after a successful backup.
 // If backupOK is false, retention is skipped entirely — we never delete upstream
 // data unless we've confirmed our local copy is durable.
 func ApplyRetention(
-	client *imapwrap.Client,
+	client RetentionClient,
 	policyJSON string,
 	msgs []policy.Message,
 	backupOK bool,

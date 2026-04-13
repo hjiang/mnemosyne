@@ -111,6 +111,38 @@ func TestInsertLocation(t *testing.T) {
 	}
 }
 
+func TestLocationExistsByFolderAndUID(t *testing.T) {
+	repo := newTestRepo(t)
+	hash := testHash("loc-exists-test")
+	date := int64(1700000000)
+	_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "test", Date: &date, Size: 10})
+	_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: 42})
+
+	exists, err := repo.LocationExistsByFolderAndUID(1, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Error("expected location to exist")
+	}
+
+	exists, err = repo.LocationExistsByFolderAndUID(1, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Error("expected location to not exist for different UID")
+	}
+
+	exists, err = repo.LocationExistsByFolderAndUID(999, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Error("expected location to not exist for different folder")
+	}
+}
+
 func TestInsertLocation_FKViolation(t *testing.T) {
 	repo := newTestRepo(t)
 	fakeHash := testHash("nonexistent")

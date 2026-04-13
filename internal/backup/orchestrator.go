@@ -39,6 +39,16 @@ type Result struct {
 	Errors       []error
 }
 
+// IMAPClient abstracts IMAP operations for the backup pipeline.
+type IMAPClient interface {
+	SelectFolder(name string) (*imapwrap.FolderInfo, error)
+	FetchEnvelopes(startUID, endUID uint32) ([]imapwrap.Envelope, error)
+	FetchBody(uid uint32) ([]byte, error)
+	MarkDeleted(uids []uint32) error
+	Expunge() error
+	Close() error
+}
+
 // Orchestrator drives the backup pipeline for an IMAP account.
 type Orchestrator struct {
 	accounts *accounts.Repo
@@ -104,7 +114,7 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 }
 
 func (o *Orchestrator) syncFolder(
-	client *imapwrap.Client,
+	client IMAPClient,
 	folder *accounts.Folder,
 	userID int64,
 	result *Result,
@@ -144,21 +154,32 @@ func (o *Orchestrator) syncFolder(
 	}
 
 	var maxUID uint32
+	var hadError bool
 	for _, env := range envs {
-		if env.UID > maxUID {
-			maxUID = env.UID
+		// Skip messages already stored from a previous (partial) run.
+		if exists, _ := o.messages.LocationExistsByFolderAndUID(folder.ID, env.UID); exists {
+			if !hadError && env.UID > maxUID {
+				maxUID = env.UID
+			}
+			continue
 		}
 
 		body, fetchErr := client.FetchBody(env.UID)
 		if fetchErr != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("UID %d: %w", env.UID, fetchErr))
+			hadError = true
 			continue
 		}
 
 		newMsg, storeErr := o.storeMessage(body, env, folder.ID, userID)
 		if storeErr != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("UID %d store: %w", env.UID, storeErr))
+			hadError = true
 			continue
+		}
+
+		if !hadError && env.UID > maxUID {
+			maxUID = env.UID
 		}
 
 		if newMsg {
@@ -180,7 +201,7 @@ func (o *Orchestrator) syncFolder(
 	return nil
 }
 
-func (o *Orchestrator) applyRetention(client *imapwrap.Client, folder *accounts.Folder) error {
+func (o *Orchestrator) applyRetention(client IMAPClient, folder *accounts.Folder) error {
 	locs, err := o.messages.ListLocationsByFolder(folder.ID)
 	if err != nil {
 		return fmt.Errorf("listing locations: %w", err)
