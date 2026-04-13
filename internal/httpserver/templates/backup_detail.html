@@ -1,0 +1,21 @@
+{{define "content"}}
+    <div class="page-header">
+        <h2>Backup Job #{{.JobID}}</h2>
+        <p><a href="/backups">&larr; Back to backup history</a></p>
+    </div>
+    <article class="card">
+        <header>
+            <strong>{{.AccountLabel}}</strong>
+            <span class="status-badge status-{{.State}}">{{.State}}</span>
+        </header>
+        {{if .ErrorLines}}
+        <div class="job-errors">
+            <ul>
+                {{range .ErrorLines}}<li class="job-error">{{.}}</li>{{end}}
+            </ul>
+        </div>
+        {{else}}
+        <p>No errors recorded.</p>
+        {{end}}
+    </article>
+{{end}}

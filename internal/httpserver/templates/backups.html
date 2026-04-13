@@ -18,7 +18,12 @@
             {{if gt .Attempts 1}} &middot; attempt {{.Attempts}}{{end}}
         </span>
         {{if .Progress}}<p class="job-progress">{{.Progress}}</p>{{end}}
-        {{if .Error}}<p class="job-error">{{.Error}}</p>{{end}}
+        {{if .ErrorLines}}
+        <p class="job-error">
+            {{index .ErrorLines 0}}
+            <a href="/backups/{{.ID}}">View all errors &rarr;</a>
+        </p>
+        {{end}}
     </article>
     {{end}}
     {{else}}

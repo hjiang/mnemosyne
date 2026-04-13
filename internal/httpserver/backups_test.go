@@ -3,6 +3,7 @@ package httpserver
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -130,5 +131,92 @@ func TestBackups_DeletedAccountLabel(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "(deleted account)") {
 		t.Errorf("expected '(deleted account)' label, got: %s", body)
+	}
+}
+
+func TestBackupDetail_ShowsErrors(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
+	j, err := env.server.queue.Enqueue("backup", string(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.server.queue.Claim(); err != nil {
+		t.Fatal(err)
+	}
+	errMsg := "folder INBOX: timeout\nfolder Sent: timeout"
+	if err := env.server.queue.Fail(j.ID, errMsg); err != nil {
+		t.Fatal(err)
+	}
+
+	path := "/backups/" + strconv.FormatInt(j.ID, 10)
+	rr := env.doRequest(t, "GET", path, env.cookieA, nil)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "folder INBOX: timeout") {
+		t.Error("expected first error line in body")
+	}
+	if !strings.Contains(body, "folder Sent: timeout") {
+		t.Error("expected second error line in body")
+	}
+}
+
+func TestBackupDetail_UserIsolation(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
+	j, err := env.server.queue.Enqueue("backup", string(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.server.queue.Claim(); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.queue.Fail(j.ID, "some error"); err != nil {
+		t.Fatal(err)
+	}
+
+	path := "/backups/" + strconv.FormatInt(j.ID, 10)
+	rr := env.doRequest(t, "GET", path, env.cookieB, nil)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d (user B should not see user A's job)", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestBackupDetail_NotFound(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	rr := env.doRequest(t, "GET", "/backups/99999", env.cookieA, nil)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestBackupsList_FailedJobLinksToDetail(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
+	j, err := env.server.queue.Enqueue("backup", string(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.server.queue.Claim(); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.queue.Fail(j.ID, "connection refused"); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := env.doRequest(t, "GET", "/backups", env.cookieA, nil)
+	body := rr.Body.String()
+	wantLink := `href="/backups/` + strconv.FormatInt(j.ID, 10)
+	if !strings.Contains(body, wantLink) {
+		t.Errorf("expected link %q in body", wantLink)
 	}
 }

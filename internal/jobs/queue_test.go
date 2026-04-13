@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -319,4 +320,50 @@ func TestUpdateProgress(t *testing.T) {
 	if got.Progress != progress {
 		t.Errorf("Progress = %q, want %q", got.Progress, progress)
 	}
+}
+
+func TestGetByIDForUser(t *testing.T) {
+	q := newTestQueue(t)
+
+	const userA int64 = 42
+	const userB int64 = 99
+
+	j, err := q.Enqueue("backup", `{"account_id":1,"user_id":42}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Claim(); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := "folder INBOX: timeout\nfolder Sent: timeout"
+	if err := q.Fail(j.ID, wantErr); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("correct user retrieves job", func(t *testing.T) {
+		got, err := q.GetByIDForUser(j.ID, userA)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.ID != j.ID {
+			t.Errorf("ID = %d, want %d", got.ID, j.ID)
+		}
+		if got.Error != wantErr {
+			t.Errorf("Error = %q, want %q", got.Error, wantErr)
+		}
+	})
+
+	t.Run("wrong user gets ErrJobNotFound", func(t *testing.T) {
+		_, err := q.GetByIDForUser(j.ID, userB)
+		if !errors.Is(err, ErrJobNotFound) {
+			t.Errorf("err = %v, want ErrJobNotFound", err)
+		}
+	})
+
+	t.Run("non-existent id gets ErrJobNotFound", func(t *testing.T) {
+		_, err := q.GetByIDForUser(99999, userA)
+		if !errors.Is(err, ErrJobNotFound) {
+			t.Errorf("err = %v, want ErrJobNotFound", err)
+		}
+	})
 }

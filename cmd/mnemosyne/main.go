@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -244,7 +246,11 @@ func backupJobHandler(orch *backup.Orchestrator, queue *jobs.Queue) jobs.Handler
 			return err
 		}
 		if len(result.Errors) > 0 {
-			return fmt.Errorf("backup completed with %d errors, first: %v", len(result.Errors), result.Errors[0])
+			msgs := make([]string, len(result.Errors))
+			for i, e := range result.Errors {
+				msgs[i] = e.Error()
+			}
+			return errors.New(strings.Join(msgs, "\n"))
 		}
 		log.Printf("backup: account %d: %d new messages", p.AccountID, result.NewMessages)
 		return nil
