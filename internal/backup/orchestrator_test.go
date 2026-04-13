@@ -856,3 +856,173 @@ func TestOrchestrator_RetrySkipsAlreadyStored(t *testing.T) {
 	}
 	t.Fatal("folder not found")
 }
+
+// Test: Retention must NOT run when backup partially fails.
+// This reproduces a data-loss bug where applyRetention always passed
+// backupOK=true, causing upstream messages to be deleted even though
+// they weren't all safely backed up locally.
+func TestOrchestrator_NoRetentionOnPartialFailure(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+
+	// Seed 5 messages with distinct dates so retention ordering is deterministic.
+	for i := 1; i <= 5; i++ {
+		raw := fmt.Sprintf(
+			"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: msg %d\r\nMessage-ID: <nrf%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+
+	// Set retention: keep newest 2 → would delete UIDs 1,2,3.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":2}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Connect a real client, then wrap it to fail on UID 3.
+	realClient := connectTestIMAP(t, env.imapSrv)
+	wrapped := &failingFetchClient{
+		IMAPClient: realClient,
+		failUIDs:   map[uint32]bool{3: true},
+	}
+
+	// Get folder record for syncFolder.
+	folders, err := env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var folder *accounts.Folder
+	for _, f := range folders {
+		if f.ID == folderID {
+			folder = f
+			break
+		}
+	}
+	if folder == nil {
+		t.Fatal("folder not found")
+	}
+
+	result := &Result{}
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+		t.Fatal(err)
+	}
+
+	// Incremental retention: UIDs 1,2 are backed up and in the expunge set → deleted.
+	// UID 3 is in the expunge set but NOT backed up → stays on server.
+	// UIDs 4,5 are kept by policy → stays on server.
+	// Expected: 3 messages (UIDs 3,4,5).
+	freshClient := connectTestIMAP(t, env.imapSrv)
+	info, err := freshClient.SelectFolder("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.NumMessages != 3 {
+		t.Errorf("IMAP NumMessages after partial backup = %d, want 3 (only confirmed backups in expunge set should be deleted)", info.NumMessages)
+	}
+}
+
+// Test: Incremental retention deletes backed-up messages per-policy during sync,
+// even when some messages fail — confirmed backups in the expunge set are deleted,
+// failed messages are left on the server.
+func TestOrchestrator_IncrementalRetentionPartialFailure(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+
+	// Seed 5 messages with distinct dates (oldest=1, newest=5).
+	for i := 1; i <= 5; i++ {
+		raw := fmt.Sprintf(
+			"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: msg %d\r\nMessage-ID: <ir%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+
+	// Keep newest 2 → expunge set is UIDs 1,2,3.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":2}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fail UID 3 — it's in the expunge set but not backed up.
+	realClient := connectTestIMAP(t, env.imapSrv)
+	wrapped := &failingFetchClient{
+		IMAPClient: realClient,
+		failUIDs:   map[uint32]bool{3: true},
+	}
+
+	folders, err := env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var folder *accounts.Folder
+	for _, f := range folders {
+		if f.ID == folderID {
+			folder = f
+			break
+		}
+	}
+	if folder == nil {
+		t.Fatal("folder not found")
+	}
+
+	result := &Result{}
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+		t.Fatal(err)
+	}
+
+	// UIDs 1,2: backed up + in expunge set → deleted from server
+	// UID 3: in expunge set but NOT backed up → stays on server
+	// UIDs 4,5: backed up + kept by policy → stays on server
+	// Expected: 3 messages on server (UIDs 3, 4, 5)
+	freshClient := connectTestIMAP(t, env.imapSrv)
+	info, err := freshClient.SelectFolder("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.NumMessages != 3 {
+		t.Errorf("IMAP NumMessages = %d, want 3 (UIDs 3,4,5 should remain)", info.NumMessages)
+	}
+}
+
+// Test: Previously-backed-up messages get deleted when retention policy tightens.
+func TestOrchestrator_RetentionDeletesPreviouslyBackedUp(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+
+	// Seed 5 messages with distinct dates.
+	for i := 1; i <= 5; i++ {
+		raw := fmt.Sprintf(
+			"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: msg %d\r\nMessage-ID: <rpb%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+
+	// First run: "all" policy — keep everything on server.
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NewMessages != 5 {
+		t.Fatalf("first run: NewMessages = %d, want 5", result.NewMessages)
+	}
+
+	// Tighten policy: keep newest 2 → should delete UIDs 1,2,3.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":2}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run: no new messages, but retention should clean up.
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify: only 2 messages left on server.
+	client := connectTestIMAP(t, env.imapSrv)
+	info, err := client.SelectFolder("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.NumMessages != 2 {
+		t.Errorf("IMAP NumMessages = %d, want 2 after policy tightening", info.NumMessages)
+	}
+}
