@@ -34,6 +34,20 @@ func (f *failingFetchClient) FetchBody(uid uint32) ([]byte, error) {
 	return f.IMAPClient.FetchBody(uid)
 }
 
+func (f *failingFetchClient) FetchBodies(uids []uint32) (map[uint32][]byte, []uint32, error) {
+	found := make(map[uint32][]byte)
+	var missing []uint32
+	for _, uid := range uids {
+		body, err := f.FetchBody(uid)
+		if err != nil {
+			missing = append(missing, uid)
+			continue
+		}
+		found[uid] = body
+	}
+	return found, missing, nil
+}
+
 type testEnv struct {
 	orchestrator *Orchestrator
 	accountsRepo *accounts.Repo

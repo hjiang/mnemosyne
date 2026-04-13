@@ -147,22 +147,74 @@ func (c *Client) FetchBody(uid uint32) ([]byte, error) {
 	}
 
 	cmd := c.raw.Fetch(uidSet, opts)
-	defer cmd.Close() //nolint:errcheck
 
 	msg := cmd.Next()
 	if msg == nil {
+		// Surface connection errors instead of masking them as "no message".
+		if err := cmd.Close(); err != nil {
+			return nil, fmt.Errorf("fetching UID %d: %w", uid, err)
+		}
 		return nil, fmt.Errorf("no message with UID %d", uid)
 	}
 
 	buf, err := msg.Collect()
 	if err != nil {
+		cmd.Close() //nolint:errcheck,gosec
 		return nil, fmt.Errorf("collecting message data: %w", err)
+	}
+
+	if err := cmd.Close(); err != nil {
+		return nil, fmt.Errorf("fetching UID %d: %w", uid, err)
 	}
 
 	for _, bs := range buf.BodySection {
 		return bs.Bytes, nil
 	}
 	return nil, fmt.Errorf("no body section in response for UID %d", uid)
+}
+
+// FetchBodies fetches full RFC822 bodies for multiple UIDs in a single IMAP
+// FETCH command. It returns a map of UID→body for messages found, a slice of
+// UIDs that were not returned by the server, and an error for connection-level
+// failures. When err is non-nil, bodies may still contain partial results that
+// were received before the failure.
+func (c *Client) FetchBodies(uids []uint32) (map[uint32][]byte, []uint32, error) {
+	if len(uids) == 0 {
+		return nil, nil, nil
+	}
+
+	uidSet := make(goiap.UIDSet, len(uids))
+	for i, uid := range uids {
+		uidSet[i] = goiap.UIDRange{Start: goiap.UID(uid), Stop: goiap.UID(uid)}
+	}
+
+	section := &goiap.FetchItemBodySection{Peek: true}
+	opts := &goiap.FetchOptions{
+		UID:         true,
+		BodySection: []*goiap.FetchItemBodySection{section},
+	}
+
+	bufs, err := c.raw.Fetch(uidSet, opts).Collect()
+
+	bodies := make(map[uint32][]byte, len(bufs))
+	for _, buf := range bufs {
+		for _, bs := range buf.BodySection {
+			bodies[uint32(buf.UID)] = bs.Bytes
+			break
+		}
+	}
+
+	var missing []uint32
+	for _, uid := range uids {
+		if _, ok := bodies[uid]; !ok {
+			missing = append(missing, uid)
+		}
+	}
+
+	if err != nil {
+		return bodies, missing, fmt.Errorf("fetching bodies: %w", err)
+	}
+	return bodies, missing, nil
 }
 
 // MarkDeleted sets the \Deleted flag on the given UIDs.

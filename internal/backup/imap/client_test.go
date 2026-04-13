@@ -159,6 +159,76 @@ func TestListFolders(t *testing.T) {
 	}
 }
 
+func TestFetchBodies(t *testing.T) {
+	srv := testimap.New(t)
+	srv.AddFolder(t, "INBOX", 1)
+	srv.SeedMessages(t, "INBOX", 5)
+
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close() //nolint:errcheck
+
+	if _, err := c.SelectFolder("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+
+	bodies, missing, err := c.FetchBodies([]uint32{1, 2, 3, 4, 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 5 {
+		t.Errorf("len(bodies) = %d, want 5", len(bodies))
+	}
+	if len(missing) != 0 {
+		t.Errorf("missing = %v, want empty", missing)
+	}
+	for uid, body := range bodies {
+		if len(body) == 0 {
+			t.Errorf("body for UID %d is empty", uid)
+		}
+	}
+}
+
+func TestFetchBodies_PartialMissing(t *testing.T) {
+	srv := testimap.New(t)
+	srv.AddFolder(t, "INBOX", 1)
+	srv.SeedMessages(t, "INBOX", 3)
+
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close() //nolint:errcheck
+
+	if _, err := c.SelectFolder("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+
+	// UID 99 does not exist.
+	bodies, missing, err := c.FetchBodies([]uint32{1, 2, 3, 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 3 {
+		t.Errorf("len(bodies) = %d, want 3", len(bodies))
+	}
+	if len(missing) != 1 || missing[0] != 99 {
+		t.Errorf("missing = %v, want [99]", missing)
+	}
+}
+
+func TestFetchBodies_Empty(t *testing.T) {
+	bodies, missing, err := (&Client{}).FetchBodies(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bodies != nil || missing != nil {
+		t.Errorf("expected nil results for empty input")
+	}
+}
+
 func TestSelectFolder_UIDValidity(t *testing.T) {
 	srv := testimap.New(t)
 	srv.AddFolder(t, "INBOX", 1)

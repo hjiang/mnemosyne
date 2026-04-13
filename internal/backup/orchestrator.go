@@ -45,10 +45,14 @@ type IMAPClient interface {
 	SelectFolder(name string) (*imapwrap.FolderInfo, error)
 	FetchEnvelopes(startUID, endUID uint32) ([]imapwrap.Envelope, error)
 	FetchBody(uid uint32) ([]byte, error)
+	FetchBodies(uids []uint32) (map[uint32][]byte, []uint32, error)
 	MarkDeleted(uids []uint32) error
 	Expunge() error
 	Close() error
 }
+
+// fetchBatchSize is the number of message bodies fetched per IMAP FETCH command.
+const fetchBatchSize = 50
 
 // Orchestrator drives the backup pipeline for an IMAP account.
 type Orchestrator struct {
@@ -154,39 +158,62 @@ func (o *Orchestrator) syncFolder(
 		return nil
 	}
 
+	// Build envelope lookup and list of UIDs that still need fetching.
+	envMap := make(map[uint32]imapwrap.Envelope, len(envs))
+	var toFetch []uint32
 	var maxUID uint32
 	var hadError bool
+
 	for _, env := range envs {
-		// Skip messages already stored from a previous (partial) run.
+		envMap[env.UID] = env
 		if exists, _ := o.messages.LocationExistsByFolderAndUID(folder.ID, env.UID); exists {
 			if !hadError && env.UID > maxUID {
 				maxUID = env.UID
 			}
 			continue
 		}
+		toFetch = append(toFetch, env.UID)
+	}
 
-		body, fetchErr := client.FetchBody(env.UID)
+	// Fetch bodies in batches to reduce round trips and connection fragility.
+	for i := 0; i < len(toFetch); i += fetchBatchSize {
+		end := i + fetchBatchSize
+		if end > len(toFetch) {
+			end = len(toFetch)
+		}
+		batch := toFetch[i:end]
+
+		bodies, _, fetchErr := client.FetchBodies(batch)
+
+		// Process each UID in order so hadError/maxUID stay consistent.
+		for _, uid := range batch {
+			body, ok := bodies[uid]
+			if !ok {
+				result.Errors = append(result.Errors, fmt.Errorf("UID %d: no message with UID %d", uid, uid))
+				hadError = true
+				continue
+			}
+			env := envMap[uid]
+			newMsg, storeErr := o.storeMessage(body, env, folder.ID, userID)
+			if storeErr != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("UID %d store: %w", uid, storeErr))
+				hadError = true
+				continue
+			}
+			if !hadError && uid > maxUID {
+				maxUID = uid
+			}
+			if newMsg {
+				result.NewMessages++
+			}
+			result.NewLocations++
+		}
+
+		// Connection-level error: no point trying further batches.
 		if fetchErr != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("UID %d: %w", env.UID, fetchErr))
-			hadError = true
-			continue
+			result.Errors = append(result.Errors, fetchErr)
+			break
 		}
-
-		newMsg, storeErr := o.storeMessage(body, env, folder.ID, userID)
-		if storeErr != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("UID %d store: %w", env.UID, storeErr))
-			hadError = true
-			continue
-		}
-
-		if !hadError && env.UID > maxUID {
-			maxUID = env.UID
-		}
-
-		if newMsg {
-			result.NewMessages++
-		}
-		result.NewLocations++
 	}
 
 	if maxUID > 0 {
