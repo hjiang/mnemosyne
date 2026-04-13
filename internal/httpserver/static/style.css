@@ -141,11 +141,14 @@ article.card footer {
 .account-actions button {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     font-size: 0.875rem;
     padding: 0.4rem 0.9rem;
     width: auto;
-    line-height: 1.4;
+    height: 2.25rem;
+    line-height: 1;
     box-sizing: border-box;
+    margin-bottom: 0;
 }
 
 /* ── Search ─────────────────────────────────── */
