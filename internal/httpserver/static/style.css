@@ -139,6 +139,9 @@ article.card footer {
 .account-actions button {
     font-size: 0.875rem;
     padding: 0.4rem 0.9rem;
+    width: auto;
+    line-height: 1.4;
+    box-sizing: border-box;
 }
 
 /* ── Search ─────────────────────────────────── */
@@ -158,6 +161,8 @@ article.card footer {
 .search-box button {
     white-space: nowrap;
     margin-bottom: 0;
+    width: auto;
+    padding-inline: 1.25rem;
 }
 
 .search-hint {
