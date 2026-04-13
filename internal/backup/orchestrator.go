@@ -154,7 +154,40 @@ func (o *Orchestrator) syncFolder(
 		return fmt.Errorf("fetching envelopes: %w", err)
 	}
 
+	// Compute retention expunge set from all known messages (DB + new envelopes).
+	// This must happen before the early return so that previously-backed-up
+	// messages get cleaned up even when there are no new messages to fetch.
+	expungeSet, retentionErr := o.computeExpungeSet(folder, envs)
+	if retentionErr != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("folder %q retention: %w", folder.Name, retentionErr))
+		expungeSet = nil // disable incremental deletion on error
+	}
+
+	// Track which UIDs are confirmed backed up (for gating deletion).
+	backedUp := make(map[uint32]bool)
+	existingLocs, _ := o.messages.ListLocationsByFolder(folder.ID)
+	for _, loc := range existingLocs {
+		backedUp[loc.UID] = true
+	}
+
+	// Mark-delete previously-backed-up messages that fall in the expunge set.
+	var didDelete bool
+	for uid := range expungeSet {
+		if backedUp[uid] {
+			if err := client.MarkDeleted([]uint32{uid}); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("mark deleted UID %d: %w", uid, err))
+			} else {
+				didDelete = true
+			}
+		}
+	}
+
 	if len(envs) == 0 {
+		if didDelete {
+			if err := client.Expunge(); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
+			}
+		}
 		return nil
 	}
 
@@ -207,6 +240,16 @@ func (o *Orchestrator) syncFolder(
 				result.NewMessages++
 			}
 			result.NewLocations++
+
+			// Incremental retention: message confirmed durable, delete from
+			// server if the retention policy says so.
+			if expungeSet[uid] {
+				if err := client.MarkDeleted([]uint32{uid}); err != nil {
+					result.Errors = append(result.Errors, fmt.Errorf("mark deleted UID %d: %w", uid, err))
+				} else {
+					didDelete = true
+				}
+			}
 		}
 
 		// Connection-level error: no point trying further batches.
@@ -220,30 +263,65 @@ func (o *Orchestrator) syncFolder(
 		_ = o.accounts.SetLastSeenUID(folder.ID, maxUID)
 	}
 
-	// Apply retention policy: delete old messages from the IMAP server
-	// now that we've confirmed they're backed up locally.
-	if err := o.applyRetention(client, folder); err != nil {
-		result.Errors = append(result.Errors, fmt.Errorf("folder %q retention: %w", folder.Name, err))
+	if didDelete {
+		if err := client.Expunge(); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
+		}
 	}
 
 	return nil
 }
 
-func (o *Orchestrator) applyRetention(client IMAPClient, folder *accounts.Folder) error {
+// computeExpungeSet merges existing DB locations with new envelopes and applies
+// the retention policy to determine which UIDs should be deleted from the server.
+func (o *Orchestrator) computeExpungeSet(
+	folder *accounts.Folder,
+	newEnvs []imapwrap.Envelope,
+) (map[uint32]bool, error) {
+	cfg, err := policy.ParseConfig(folder.PolicyJSON)
+	if err != nil {
+		return nil, fmt.Errorf("parsing policy: %w", err)
+	}
+
+	// Gather all known messages: existing locations from DB + new envelopes.
 	locs, err := o.messages.ListLocationsByFolder(folder.ID)
 	if err != nil {
-		return fmt.Errorf("listing locations: %w", err)
+		return nil, fmt.Errorf("listing locations: %w", err)
 	}
 
-	msgs := make([]policy.Message, len(locs))
-	for i, loc := range locs {
-		msgs[i] = policy.Message{UID: loc.UID}
-		if loc.InternalDate != nil {
-			msgs[i].InternalDate = *loc.InternalDate
+	seen := make(map[uint32]bool, len(locs)+len(newEnvs))
+	var msgs []policy.Message
+
+	for _, loc := range locs {
+		if seen[loc.UID] {
+			continue
 		}
+		seen[loc.UID] = true
+		m := policy.Message{UID: loc.UID}
+		if loc.InternalDate != nil {
+			m.InternalDate = *loc.InternalDate
+		}
+		msgs = append(msgs, m)
 	}
 
-	return ApplyRetention(client, folder.PolicyJSON, msgs, true, time.Now())
+	for _, env := range newEnvs {
+		if seen[env.UID] {
+			continue
+		}
+		seen[env.UID] = true
+		msgs = append(msgs, policy.Message{UID: env.UID, InternalDate: env.Date})
+	}
+
+	uids := policy.Apply(cfg, msgs, time.Now())
+	if len(uids) == 0 {
+		return nil, nil
+	}
+
+	set := make(map[uint32]bool, len(uids))
+	for _, uid := range uids {
+		set[uid] = true
+	}
+	return set, nil
 }
 
 func (o *Orchestrator) storeMessage(
