@@ -80,6 +80,38 @@ func TestFetchBody(t *testing.T) {
 	}
 }
 
+func TestFetchEnvelopes_RFC2047Subject(t *testing.T) {
+	srv := testimap.New(t)
+	srv.AddFolder(t, "INBOX", 1)
+
+	// Subject is "你好！" encoded as GB2312 + Base64 per RFC 2047.
+	raw := []byte("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: =?GB2312?B?xOO6w6Oh?=\r\nMessage-ID: <rfc2047@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody\r\n")
+	srv.AppendMessage(t, "INBOX", raw)
+
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close() //nolint:errcheck
+
+	if _, err := c.SelectFolder("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+
+	envs, err := c.FetchEnvelopes(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(envs) != 1 {
+		t.Fatalf("len(envs) = %d, want 1", len(envs))
+	}
+
+	want := "你好！"
+	if envs[0].Subject != want {
+		t.Errorf("Subject = %q, want %q", envs[0].Subject, want)
+	}
+}
+
 func TestSelectFolder_Nonexistent(t *testing.T) {
 	srv := testimap.New(t)
 

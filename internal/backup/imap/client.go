@@ -4,10 +4,12 @@ package imap
 
 import (
 	"fmt"
+	"mime"
 	"sort"
 
 	goiap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-message/charset"
 )
 
 // FolderInfo contains metadata returned by SELECT.
@@ -36,12 +38,15 @@ type Client struct {
 // Dial connects to an IMAP server, authenticates, and returns a Client.
 // Set tls to true for implicit TLS (port 993).
 func Dial(addr, username, password string, tls bool) (*Client, error) {
+	opts := &imapclient.Options{
+		WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
+	}
 	var raw *imapclient.Client
 	var err error
 	if tls {
-		raw, err = imapclient.DialTLS(addr, nil)
+		raw, err = imapclient.DialTLS(addr, opts)
 	} else {
-		raw, err = imapclient.DialInsecure(addr, nil)
+		raw, err = imapclient.DialInsecure(addr, opts)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("connecting to %s: %w", addr, err)

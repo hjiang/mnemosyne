@@ -68,6 +68,10 @@ The backup pipeline writes in this order: **blob -> message row -> location row*
 
 Messages are keyed by `sha256(raw_body)`. The `messages.hash` column is the primary key. Two locations pointing to the same content share one message row and one blob on disk. Blob path: `<root>/<hash[0:2]>/<hash[2:4]>/<full_hash_hex>`.
 
+### Bug Fixes
+
+When fixing a bug, first write a failing test that reproduces the issue, then fix the code to make the test pass. This ensures the bug is well-understood and won't regress.
+
 ### Error Handling in Tests
 
 - Use `t.Fatal` for setup failures, `t.Errorf` for assertion failures
