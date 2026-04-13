@@ -18,6 +18,9 @@
                     <button class="policy-toggle" type="button" onclick="togglePolicy(this)" aria-label="Configure retention policy">
                         <span class="policy-badge">{{if eq .PolicyType "all"}}keep all{{else if eq .PolicyType "newest_n"}}keep {{.PolicyN}} newest{{else}}keep {{.PolicyDays}}d{{end}}</span>
                     </button>
+                    <form method="POST" action="/accounts/{{$.Account.ID}}/folders/{{.ID}}/resync" style="margin:0">
+                        <button type="submit" class="policy-toggle" aria-label="Resync folder">resync</button>
+                    </form>
                 </div>
                 <div class="policy-panel" hidden>
                     <form method="POST" action="/accounts/{{$.Account.ID}}/folders/{{.ID}}/policy" class="policy-form">

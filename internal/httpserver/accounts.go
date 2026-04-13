@@ -194,6 +194,33 @@ func (s *Server) folderPolicyUpdate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", accountID), http.StatusSeeOther)
 }
 
+func (s *Server) folderResync(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	accountID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if _, err := s.accounts.GetByID(accountID, userID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	folderID, err := strconv.ParseInt(chi.URLParam(r, "folderID"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := s.accounts.SetLastSeenUID(folderID, 0); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", accountID), http.StatusSeeOther)
+}
+
 func (s *Server) backupRun(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	accountID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
