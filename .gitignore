@@ -20,3 +20,4 @@ data/
 *.db
 secret.key
 /mnemosyne
+.claude/settings.local.json
