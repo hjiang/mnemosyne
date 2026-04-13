@@ -160,6 +160,51 @@ func TestAttachmentDownload_NotFound(t *testing.T) {
 	}
 }
 
+func TestReprocess_UpdatesSubject(t *testing.T) {
+	env := newMessageTestEnv(t)
+
+	// Raw RFC 822 message with an RFC 2047 GB2312-encoded subject ("你好！").
+	raw := []byte("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: =?GB2312?B?xOO6w6Oh?=\r\nMessage-ID: <rfc2047@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody\r\n")
+
+	// Store the blob and insert a message with the undecoded subject
+	// (simulating what happened before the Dial fix).
+	blobHash, err := env.blobs.Put(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	date := int64(1700000000)
+	err = env.messages.Insert(&messages.Message{
+		Hash:    blobHash,
+		UserID:  1,
+		Subject: "=?GB2312?B?xOO6w6Oh?=", // stored undecoded
+		Date:    &date,
+		Size:    int64(len(raw)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hashHex := hex.EncodeToString(blobHash)
+	req := httptest.NewRequest("POST", "/message/"+hashHex+"/reprocess", nil)
+	req.AddCookie(&http.Cookie{Name: "mnemosyne_session", Value: env.cookieA})
+	rr := httptest.NewRecorder()
+	env.server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusSeeOther)
+	}
+
+	// Verify the subject was updated to the decoded value.
+	msg, err := env.messages.GetByHash(blobHash, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "你好！"
+	if msg.Subject != want {
+		t.Errorf("Subject = %q, want %q", msg.Subject, want)
+	}
+}
+
 func TestAttachmentDownload_InvalidID(t *testing.T) {
 	env := newMessageTestEnv(t)
 

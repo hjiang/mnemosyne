@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-message"
+	_ "github.com/emersion/go-message/charset" // registers charset decoders for RFC 2047
 
 	"github.com/hjiang/mnemosyne/internal/accounts"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
@@ -329,6 +330,20 @@ func (o *Orchestrator) storeAttachments(body, msgHash []byte) {
 			TextExtracted: 0,
 		})
 	}
+}
+
+// ExtractSubject parses the Subject header from a raw RFC 822 message,
+// decoding any RFC 2047 encoded-words. Returns empty string on failure.
+func ExtractSubject(raw []byte) string {
+	entity, err := message.Read(bytes.NewReader(raw))
+	if err != nil {
+		return ""
+	}
+	subject, err := entity.Header.Text("Subject")
+	if err != nil {
+		return ""
+	}
+	return subject
 }
 
 // ExtractBodyText parses a raw MIME message and returns the text body.

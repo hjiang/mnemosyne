@@ -144,7 +144,19 @@ func (s *Server) messageReprocessHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	_ = s.messages.ReindexFTS(msg.Hash, msg.Subject, msg.FromAddr, msg.ToAddrs, msg.CcAddrs, bodyText)
+
+	subject := backup.ExtractSubject(raw)
+	if subject == "" {
+		subject = msg.Subject
+	}
+	if subject != msg.Subject {
+		if err := s.messages.UpdateSubject(msg.Hash, subject); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	_ = s.messages.ReindexFTS(msg.Hash, subject, msg.FromAddr, msg.ToAddrs, msg.CcAddrs, bodyText)
 
 	http.Redirect(w, r, "/message/"+hashHex, http.StatusSeeOther)
 }

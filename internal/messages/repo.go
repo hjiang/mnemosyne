@@ -431,6 +431,15 @@ func (r *Repo) UpdateBodyText(hash []byte, bodyText string) error {
 	return nil
 }
 
+// UpdateSubject sets the subject for the message identified by hash.
+func (r *Repo) UpdateSubject(hash []byte, subject string) error {
+	_, err := r.db.Exec("UPDATE messages SET subject = ? WHERE hash = ?", subject, hash)
+	if err != nil {
+		return fmt.Errorf("updating subject: %w", err)
+	}
+	return nil
+}
+
 // ListUnindexedMessages returns messages that have no FTS entry yet.
 func (r *Repo) ListUnindexedMessages() ([]*Message, error) {
 	rows, err := r.db.Query(
