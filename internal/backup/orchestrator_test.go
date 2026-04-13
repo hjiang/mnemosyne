@@ -536,6 +536,44 @@ func TestExtractBodyText_NestedMultipartHTMLOnly(t *testing.T) {
 	}
 }
 
+// Test: ExtractBodyText prefers body text over text/plain attachment.
+func TestExtractBodyText_TextPlainAttachment(t *testing.T) {
+	raw := []byte("From: sender@test.com\r\n" +
+		"To: rcpt@test.com\r\n" +
+		"Subject: testing attachment\r\n" +
+		"Message-ID: <test@test>\r\n" +
+		"Date: Mon, 13 Apr 2026 02:30:45 +0800\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"outer\"\r\n" +
+		"\r\n" +
+		"--outer\r\n" +
+		"Content-Type: multipart/alternative; boundary=\"inner\"\r\n" +
+		"\r\n" +
+		"--inner\r\n" +
+		"Content-Transfer-Encoding: 7bit\r\n" +
+		"Content-Type: text/plain; charset=US-ASCII; format=flowed\r\n" +
+		"\r\n" +
+		"Just testing an email with attachment.\r\n" +
+		"--inner\r\n" +
+		"Content-Transfer-Encoding: quoted-printable\r\n" +
+		"Content-Type: text/html; charset=UTF-8\r\n" +
+		"\r\n" +
+		"<html><body><p>Just testing an email with attachment.</p></body></html>\r\n" +
+		"--inner--\r\n" +
+		"--outer\r\n" +
+		"Content-Transfer-Encoding: base64\r\n" +
+		"Content-Type: text/plain; name=model.stl\r\n" +
+		"Content-Disposition: attachment; filename=model.stl; size=3052\r\n" +
+		"\r\n" +
+		"c29saWQgCiBmYWNldCBub3JtYWwgLTEuMDAwMDAwZSswMCAgMC4wMDAwMDBlKzAw\r\n" +
+		"--outer--\r\n")
+
+	text := ExtractBodyText(raw)
+	if text != "Just testing an email with attachment." {
+		t.Errorf("ExtractBodyText = %q, want %q", text, "Just testing an email with attachment.")
+	}
+}
+
 // Test: Retention policy is applied after backup — older messages are expunged from IMAP.
 func TestOrchestrator_RetentionApplied(t *testing.T) {
 	env := newTestEnv(t)

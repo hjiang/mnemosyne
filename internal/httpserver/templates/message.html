@@ -32,5 +32,9 @@
         <div class="message-body">
             <pre>{{.Message.BodyText}}</pre>
         </div>
+
+        <form method="POST" action="/message/{{hexhash .Message.Hash}}/reprocess" style="margin-top: 1rem;">
+            <button type="submit" class="secondary outline" style="font-size: 0.85rem;">Re-extract body text</button>
+        </form>
     </article>
 {{end}}

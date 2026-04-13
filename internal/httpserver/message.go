@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hjiang/mnemosyne/internal/auth"
+	"github.com/hjiang/mnemosyne/internal/backup"
 	"github.com/hjiang/mnemosyne/internal/blobs"
 	"github.com/hjiang/mnemosyne/internal/messages"
 )
@@ -100,4 +101,50 @@ func (s *Server) attachmentDownloadHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	io.Copy(w, rc) //nolint:errcheck,gosec
+}
+
+func (s *Server) messageReprocessHandler(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	hashHex := chi.URLParam(r, "hash")
+
+	hash, err := hex.DecodeString(hashHex)
+	if err != nil {
+		http.Error(w, "invalid message hash", http.StatusBadRequest)
+		return
+	}
+
+	msg, err := s.messages.GetByHash(hash, userID)
+	if err != nil {
+		if errors.Is(err, messages.ErrNotFound) {
+			http.Error(w, "message not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	rc, err := s.blobs.Get(msg.Hash)
+	if err != nil {
+		if errors.Is(err, blobs.ErrNotFound) {
+			http.Error(w, "raw message blob not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	raw, err := io.ReadAll(rc)
+	rc.Close() //nolint:errcheck,gosec
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	bodyText := backup.ExtractBodyText(raw)
+	if err := s.messages.UpdateBodyText(msg.Hash, bodyText); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	_ = s.messages.ReindexFTS(msg.Hash, msg.Subject, msg.FromAddr, msg.ToAddrs, msg.CcAddrs, bodyText)
+
+	http.Redirect(w, r, "/message/"+hashHex, http.StatusSeeOther)
 }
