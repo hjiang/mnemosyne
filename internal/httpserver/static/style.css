@@ -127,16 +127,20 @@ article.card footer {
 
 .account-actions {
     display: flex;
+    align-items: center;
     gap: 0.5rem;
     margin-top: 0.75rem;
 }
 
 .account-actions form {
     margin: 0;
+    display: flex;
 }
 
 .account-actions a,
 .account-actions button {
+    display: inline-flex;
+    align-items: center;
     font-size: 0.875rem;
     padding: 0.4rem 0.9rem;
     width: auto;
@@ -162,6 +166,7 @@ article.card footer {
     white-space: nowrap;
     margin-bottom: 0;
     width: auto;
+    flex-shrink: 0;
     padding-inline: 1.25rem;
 }
 
