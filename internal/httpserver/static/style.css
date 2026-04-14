@@ -300,6 +300,11 @@ article.card footer {
     padding: 0;
 }
 
+.folder-item form:first-child {
+    flex: 1;
+    min-width: 0;
+}
+
 .folder-item form {
     margin: 0;
 }
