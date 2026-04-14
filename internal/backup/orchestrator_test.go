@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -1085,11 +1086,15 @@ func TestOrchestrator_BatchEOF_NoSpuriousErrors(t *testing.T) {
 	}
 
 	result := &Result{}
-	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
-		t.Fatal(err)
+	syncErr := env.orchestrator.syncFolder(wrapped, folder, env.userID, result)
+
+	// syncFolder should return a *connError wrapping the EOF.
+	var ce *connError
+	if !errors.As(syncErr, &ce) {
+		t.Fatalf("expected *connError, got: %v", syncErr)
 	}
 
-	// Should have exactly 1 error: the connection-level EOF.
+	// Should have exactly 1 error in result.Errors: the connection-level EOF.
 	// NOT 3 individual "no message with UID" errors for the unreceived UIDs.
 	if len(result.Errors) != 1 {
 		t.Errorf("Errors = %d, want 1; got: %v", len(result.Errors), result.Errors)
@@ -1117,4 +1122,74 @@ func TestOrchestrator_BatchEOF_NoSpuriousErrors(t *testing.T) {
 		}
 	}
 	t.Fatal("folder not found after sync")
+}
+
+// Test: Run() reconnects and retries when a connection error occurs mid-sync,
+// as long as forward progress is being made.
+func TestOrchestrator_RetryOnConnectionFailure(t *testing.T) {
+	env := newTestEnv(t)
+	enableFolder(t, env, "INBOX")
+	env.imapSrv.SeedMessages(t, "INBOX", 5) // UIDs 1-5
+
+	dialCount := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool) (IMAPClient, error) {
+		dialCount++
+		realClient := connectTestIMAP(t, env.imapSrv)
+		if dialCount <= 1 {
+			// First connection: EOF after 2 messages.
+			return &eofFetchClient{IMAPClient: realClient, succeedCount: 2}, nil
+		}
+		// Subsequent connections: work normally.
+		return realClient, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// All 5 messages should be stored across the two attempts.
+	if result.NewMessages != 5 {
+		t.Errorf("NewMessages = %d, want 5", result.NewMessages)
+	}
+
+	// Should have dialed at least twice (initial + one reconnect).
+	if dialCount < 2 {
+		t.Errorf("dialCount = %d, want >= 2", dialCount)
+	}
+}
+
+// Test: Run() stops retrying when no progress is made.
+func TestOrchestrator_RetryStopsWithoutProgress(t *testing.T) {
+	env := newTestEnv(t)
+	enableFolder(t, env, "INBOX")
+	env.imapSrv.SeedMessages(t, "INBOX", 3)
+
+	dialCount := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool) (IMAPClient, error) {
+		dialCount++
+		realClient := connectTestIMAP(t, env.imapSrv)
+		// Every connection: EOF before any messages are received.
+		return &eofFetchClient{IMAPClient: realClient, succeedCount: 0}, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No messages should be stored.
+	if result.NewMessages != 0 {
+		t.Errorf("NewMessages = %d, want 0", result.NewMessages)
+	}
+
+	// Should have dialed exactly once — no reconnect since no progress was made.
+	if dialCount != 1 {
+		t.Errorf("dialCount = %d, want 1 (should not retry without progress)", dialCount)
+	}
+
+	// Should have errors reported.
+	if len(result.Errors) == 0 {
+		t.Error("expected errors to be reported")
+	}
 }

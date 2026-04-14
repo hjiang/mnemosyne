@@ -4,6 +4,7 @@ package backup
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -56,11 +57,19 @@ type IMAPClient interface {
 // fetchBatchSize is the number of message bodies fetched per IMAP FETCH command.
 const fetchBatchSize = 50
 
+// connError signals that syncFolder stopped due to a connection-level failure.
+// Run uses this to decide whether reconnecting and retrying is worthwhile.
+type connError struct{ err error }
+
+func (e *connError) Error() string { return e.err.Error() }
+func (e *connError) Unwrap() error { return e.err }
+
 // Orchestrator drives the backup pipeline for an IMAP account.
 type Orchestrator struct {
 	accounts *accounts.Repo
 	messages *messages.Repo
 	blobs    *blobs.Store
+	dialFunc func(addr, user, pass string, tls bool) (IMAPClient, error) // nil = use imapwrap.Dial
 }
 
 // NewOrchestrator creates a backup orchestrator.
@@ -72,6 +81,26 @@ func NewOrchestrator(accts *accounts.Repo, msgs *messages.Repo, store *blobs.Sto
 	}
 }
 
+func (o *Orchestrator) dial(addr, user, pass string, tls bool) (IMAPClient, error) {
+	if o.dialFunc != nil {
+		return o.dialFunc(addr, user, pass, tls)
+	}
+	return imapwrap.Dial(addr, user, pass, tls)
+}
+
+func (o *Orchestrator) reloadFolder(accountID, folderID int64) *accounts.Folder {
+	folders, err := o.accounts.ListFolders(accountID)
+	if err != nil {
+		return nil
+	}
+	for _, f := range folders {
+		if f.ID == folderID {
+			return f
+		}
+	}
+	return nil
+}
+
 // Run backs up all enabled folders for the given account.
 // If onProgress is non-nil, it is called before each folder sync.
 func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*Result, error) {
@@ -81,11 +110,11 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 	}
 
 	addr := fmt.Sprintf("%s:%d", acct.Host, acct.Port)
-	client, err := imapwrap.Dial(addr, acct.Username, acct.Password, acct.UseTLS)
+	client, err := o.dial(addr, acct.Username, acct.Password, acct.UseTLS)
 	if err != nil {
 		return nil, fmt.Errorf("connecting: %w", err)
 	}
-	defer client.Close() //nolint:errcheck
+	defer func() { _ = client.Close() }()
 
 	folders, err := o.accounts.ListFolders(accountID)
 	if err != nil {
@@ -110,8 +139,45 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 				NewLocations: result.NewLocations,
 			})
 		}
-		if err := o.syncFolder(client, folder, userID, result); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("folder %q: %w", folder.Name, err))
+
+		// Retry loop: keep syncing as long as forward progress is made.
+		// On connection failure, reconnect and retry. Stop when no new
+		// locations are stored (no progress) or on non-connection errors.
+		for {
+			prevLocs := result.NewLocations
+			syncErr := o.syncFolder(client, folder, userID, result)
+			if syncErr == nil {
+				break
+			}
+
+			var ce *connError
+			if !errors.As(syncErr, &ce) {
+				result.Errors = append(result.Errors, fmt.Errorf("folder %q: %w", folder.Name, syncErr))
+				break
+			}
+
+			if result.NewLocations == prevLocs {
+				result.Errors = append(result.Errors, fmt.Errorf("folder %q: no progress, giving up: %w", folder.Name, syncErr))
+				break
+			}
+
+			// Made progress — reconnect and retry.
+			_ = client.Close()
+			newClient, dialErr := o.dial(addr, acct.Username, acct.Password, acct.UseTLS)
+			if dialErr != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("folder %q reconnect: %w", folder.Name, dialErr))
+				// Try once more so subsequent folders aren't stuck with a dead client.
+				if c, err := o.dial(addr, acct.Username, acct.Password, acct.UseTLS); err == nil {
+					client = c
+				}
+				break
+			}
+			client = newClient
+
+			// Reload folder to pick up LastSeenUID progress from partial run.
+			if f := o.reloadFolder(accountID, folder.ID); f != nil {
+				folder = f
+			}
 		}
 	}
 
@@ -211,6 +277,7 @@ func (o *Orchestrator) syncFolder(
 	}
 
 	// Fetch bodies in batches to reduce round trips and connection fragility.
+	var batchErr error
 	for i := 0; i < len(toFetch); i += fetchBatchSize {
 		end := i + fetchBatchSize
 		if end > len(toFetch) {
@@ -263,6 +330,7 @@ func (o *Orchestrator) syncFolder(
 		if fetchErr != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("fetching bodies (batch %d–%d, %d of %d received): %w",
 				batch[0], batch[len(batch)-1], len(bodies), len(batch), fetchErr))
+			batchErr = fetchErr
 			break
 		}
 	}
@@ -277,6 +345,9 @@ func (o *Orchestrator) syncFolder(
 		}
 	}
 
+	if batchErr != nil {
+		return &connError{err: batchErr}
+	}
 	return nil
 }
 
