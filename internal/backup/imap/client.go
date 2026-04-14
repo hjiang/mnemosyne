@@ -183,10 +183,11 @@ func (c *Client) FetchBodies(uids []uint32) (map[uint32][]byte, []uint32, error)
 		return nil, nil, nil
 	}
 
-	uidSet := make(goiap.UIDSet, len(uids))
+	uidIDs := make([]goiap.UID, len(uids))
 	for i, uid := range uids {
-		uidSet[i] = goiap.UIDRange{Start: goiap.UID(uid), Stop: goiap.UID(uid)}
+		uidIDs[i] = goiap.UID(uid)
 	}
+	uidSet := goiap.UIDSetNum(uidIDs...)
 
 	section := &goiap.FetchItemBodySection{Peek: true}
 	opts := &goiap.FetchOptions{
@@ -222,10 +223,11 @@ func (c *Client) MarkDeleted(uids []uint32) error {
 	if len(uids) == 0 {
 		return nil
 	}
-	set := make(goiap.UIDSet, len(uids))
+	uidIDs := make([]goiap.UID, len(uids))
 	for i, uid := range uids {
-		set[i] = goiap.UIDRange{Start: goiap.UID(uid), Stop: goiap.UID(uid)}
+		uidIDs[i] = goiap.UID(uid)
 	}
+	set := goiap.UIDSetNum(uidIDs...)
 	store := &goiap.StoreFlags{
 		Op:     goiap.StoreFlagsAdd,
 		Flags:  []goiap.Flag{goiap.FlagDeleted},
