@@ -26,6 +26,13 @@ type failingFetchClient struct {
 	fetchBodyCalls int
 }
 
+// eofFetchClient wraps a real IMAPClient and simulates a connection failure
+// (unexpected EOF) during FetchBodies, returning only the first N bodies.
+type eofFetchClient struct {
+	IMAPClient
+	succeedCount int // how many UIDs to return before simulating EOF
+}
+
 func (f *failingFetchClient) FetchBody(uid uint32) ([]byte, error) {
 	f.fetchBodyCalls++
 	if f.failUIDs[uid] {
@@ -46,6 +53,24 @@ func (f *failingFetchClient) FetchBodies(uids []uint32) (map[uint32][]byte, []ui
 		found[uid] = body
 	}
 	return found, missing, nil
+}
+
+func (e *eofFetchClient) FetchBodies(uids []uint32) (map[uint32][]byte, []uint32, error) {
+	found := make(map[uint32][]byte)
+	var missing []uint32
+	for i, uid := range uids {
+		if i >= e.succeedCount {
+			missing = append(missing, uids[i:]...)
+			break
+		}
+		body, err := e.FetchBody(uid)
+		if err != nil {
+			missing = append(missing, uid)
+			continue
+		}
+		found[uid] = body
+	}
+	return found, missing, fmt.Errorf("in response-data: unexpected EOF")
 }
 
 type testEnv struct {
@@ -1027,4 +1052,69 @@ func TestOrchestrator_RetentionDeletesPreviouslyBackedUp(t *testing.T) {
 	if info.NumMessages != 2 {
 		t.Errorf("IMAP NumMessages = %d, want 2 after policy tightening", info.NumMessages)
 	}
+}
+
+// Test: When FetchBodies returns a partial result with a connection error (EOF),
+// only one error should be reported (the connection error), not individual
+// "no message" errors for each unreceived UID.
+func TestOrchestrator_BatchEOF_NoSpuriousErrors(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.imapSrv.SeedMessages(t, "INBOX", 5) // UIDs 1-5
+
+	realClient := connectTestIMAP(t, env.imapSrv)
+	// Return only first 2 bodies, then simulate EOF.
+	wrapped := &eofFetchClient{
+		IMAPClient:   realClient,
+		succeedCount: 2,
+	}
+
+	folders, err := env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var folder *accounts.Folder
+	for _, f := range folders {
+		if f.ID == folderID {
+			folder = f
+			break
+		}
+	}
+	if folder == nil {
+		t.Fatal("folder not found")
+	}
+
+	result := &Result{}
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have exactly 1 error: the connection-level EOF.
+	// NOT 3 individual "no message with UID" errors for the unreceived UIDs.
+	if len(result.Errors) != 1 {
+		t.Errorf("Errors = %d, want 1; got: %v", len(result.Errors), result.Errors)
+	}
+	if len(result.Errors) > 0 && !strings.Contains(result.Errors[0].Error(), "unexpected EOF") {
+		t.Errorf("expected EOF error, got: %v", result.Errors[0])
+	}
+
+	// The 2 successfully received messages should still be stored.
+	if result.NewMessages != 2 {
+		t.Errorf("NewMessages = %d, want 2", result.NewMessages)
+	}
+
+	// LastSeenUID should be 2 (last contiguously successful), not 5.
+	folders, err = env.accountsRepo.ListFolders(env.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range folders {
+		if f.ID == folderID {
+			if f.LastSeenUID != 2 {
+				t.Errorf("LastSeenUID = %d, want 2 (should not advance past EOF batch)", f.LastSeenUID)
+			}
+			return
+		}
+	}
+	t.Fatal("folder not found after sync")
 }

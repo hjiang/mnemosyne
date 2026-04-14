@@ -224,7 +224,12 @@ func (o *Orchestrator) syncFolder(
 		for _, uid := range batch {
 			body, ok := bodies[uid]
 			if !ok {
-				result.Errors = append(result.Errors, fmt.Errorf("UID %d: no message with UID %d", uid, uid))
+				// When fetchErr is set, this UID was simply not received
+				// before the connection died — don't log it individually
+				// since the connection error below covers it.
+				if fetchErr == nil {
+					result.Errors = append(result.Errors, fmt.Errorf("UID %d: no message with UID %d", uid, uid))
+				}
 				hadError = true
 				continue
 			}
@@ -256,7 +261,8 @@ func (o *Orchestrator) syncFolder(
 
 		// Connection-level error: no point trying further batches.
 		if fetchErr != nil {
-			result.Errors = append(result.Errors, fetchErr)
+			result.Errors = append(result.Errors, fmt.Errorf("fetching bodies (batch %d–%d, %d of %d received): %w",
+				batch[0], batch[len(batch)-1], len(bodies), len(batch), fetchErr))
 			break
 		}
 	}
