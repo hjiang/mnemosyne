@@ -18,6 +18,7 @@
             {{if gt .Attempts 1}} &middot; attempt {{.Attempts}}{{end}}
         </span>
         {{if .Progress}}<p class="job-progress">{{.Progress}}</p>{{end}}
+        {{if .Summary}}<p class="job-summary">{{.Summary}}</p>{{end}}
         {{if .ErrorLines}}
         <p class="job-error">
             {{index .ErrorLines 0}}

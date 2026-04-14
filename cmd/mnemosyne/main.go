@@ -245,6 +245,13 @@ func backupJobHandler(orch *backup.Orchestrator, queue *jobs.Queue) jobs.Handler
 		if err != nil {
 			return err
 		}
+		// Write final progress with complete stats.
+		onProgress(backup.Progress{
+			Done:         true,
+			NewMessages:  result.NewMessages,
+			NewLocations: result.NewLocations,
+			ErrorCount:   len(result.Errors),
+		})
 		if len(result.Errors) > 0 {
 			msgs := make([]string, len(result.Errors))
 			for i, e := range result.Errors {

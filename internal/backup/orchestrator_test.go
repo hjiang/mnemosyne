@@ -673,7 +673,7 @@ func TestOrchestrator_InvalidAccount(t *testing.T) {
 	}
 }
 
-// Test: Progress callback is called with correct folder counts.
+// Test: Progress callback is called before each folder sync.
 func TestOrchestrator_ProgressCallback(t *testing.T) {
 	env := newTestEnv(t)
 	enableFolder(t, env, "INBOX")
@@ -686,7 +686,7 @@ func TestOrchestrator_ProgressCallback(t *testing.T) {
 		updates = append(updates, p)
 	}
 
-	result, err := env.orchestrator.Run(env.accountID, env.userID, onProgress)
+	_, err := env.orchestrator.Run(env.accountID, env.userID, onProgress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -695,21 +695,23 @@ func TestOrchestrator_ProgressCallback(t *testing.T) {
 		t.Fatalf("got %d progress updates, want 2", len(updates))
 	}
 
-	// First update: after first folder.
+	// First update: before syncing first folder (no messages yet).
 	if updates[0].FolderIndex != 1 {
 		t.Errorf("update[0].FolderIndex = %d, want 1", updates[0].FolderIndex)
 	}
 	if updates[0].FolderTotal != 2 {
 		t.Errorf("update[0].FolderTotal = %d, want 2", updates[0].FolderTotal)
 	}
-
-	// Last update should match final result.
-	last := updates[len(updates)-1]
-	if last.FolderIndex != 2 {
-		t.Errorf("last.FolderIndex = %d, want 2", last.FolderIndex)
+	if updates[0].NewMessages != 0 {
+		t.Errorf("update[0].NewMessages = %d, want 0 (reported before sync)", updates[0].NewMessages)
 	}
-	if last.NewMessages != result.NewMessages {
-		t.Errorf("last.NewMessages = %d, want %d", last.NewMessages, result.NewMessages)
+
+	// Second update: before syncing second folder (has messages from first).
+	if updates[1].FolderIndex != 2 {
+		t.Errorf("update[1].FolderIndex = %d, want 2", updates[1].FolderIndex)
+	}
+	if updates[1].NewMessages != 3 {
+		t.Errorf("update[1].NewMessages = %d, want 3 (accumulated from first folder)", updates[1].NewMessages)
 	}
 }
 

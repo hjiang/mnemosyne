@@ -538,7 +538,8 @@ a.result-link:hover .result-card {
     margin-bottom: 0;
 }
 
-.job-progress {
+.job-progress,
+.job-summary {
     color: var(--pico-muted-color);
     font-size: 0.85rem;
     margin-top: 0.5rem;

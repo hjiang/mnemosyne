@@ -28,9 +28,11 @@ type Progress struct {
 	FolderTotal  int    `json:"folder_total"`
 	NewMessages  int    `json:"new_messages"`
 	NewLocations int    `json:"new_locations"`
+	ErrorCount   int    `json:"error_count,omitempty"`
+	Done         bool   `json:"done,omitempty"`
 }
 
-// ProgressFunc is called after each folder sync to report progress.
+// ProgressFunc is called before each folder sync to report progress.
 type ProgressFunc func(p Progress)
 
 // Result summarizes a backup run.
@@ -71,7 +73,7 @@ func NewOrchestrator(accts *accounts.Repo, msgs *messages.Repo, store *blobs.Sto
 }
 
 // Run backs up all enabled folders for the given account.
-// If onProgress is non-nil, it is called after each folder sync.
+// If onProgress is non-nil, it is called before each folder sync.
 func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*Result, error) {
 	acct, err := o.accounts.GetByID(accountID, userID)
 	if err != nil {
@@ -99,9 +101,6 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 
 	result := &Result{}
 	for i, folder := range enabled {
-		if err := o.syncFolder(client, folder, userID, result); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("folder %q: %w", folder.Name, err))
-		}
 		if onProgress != nil {
 			onProgress(Progress{
 				Folder:       folder.Name,
@@ -110,6 +109,9 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 				NewMessages:  result.NewMessages,
 				NewLocations: result.NewLocations,
 			})
+		}
+		if err := o.syncFolder(client, folder, userID, result); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("folder %q: %w", folder.Name, err))
 		}
 	}
 

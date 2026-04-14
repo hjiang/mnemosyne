@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hjiang/mnemosyne/internal/backup"
 	"github.com/hjiang/mnemosyne/internal/scheduler"
 )
 
@@ -194,6 +195,63 @@ func TestBackupDetail_NotFound(t *testing.T) {
 	rr := env.doRequest(t, "GET", "/backups/99999", env.cookieA, nil)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestBackups_DoneJobShowsSummary(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
+	j, err := env.server.queue.Enqueue("backup", string(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.server.queue.Claim(); err != nil {
+		t.Fatal(err)
+	}
+	prog, _ := json.Marshal(backup.Progress{Done: true, NewMessages: 42})
+	if err := env.server.queue.UpdateProgress(j.ID, string(prog)); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.queue.Complete(j.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := env.doRequest(t, "GET", "/backups", env.cookieA, nil)
+	body := rr.Body.String()
+	if !strings.Contains(body, "42 emails fetched") {
+		t.Errorf("expected summary with message count, got: %s", body)
+	}
+}
+
+func TestBackups_FailedJobShowsSummaryWithErrors(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
+	j, err := env.server.queue.Enqueue("backup", string(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.server.queue.Claim(); err != nil {
+		t.Fatal(err)
+	}
+	prog, _ := json.Marshal(backup.Progress{Done: true, NewMessages: 10, ErrorCount: 2})
+	if err := env.server.queue.UpdateProgress(j.ID, string(prog)); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.queue.Fail(j.ID, "folder INBOX: timeout\nfolder Sent: timeout"); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := env.doRequest(t, "GET", "/backups", env.cookieA, nil)
+	body := rr.Body.String()
+	if !strings.Contains(body, "10 emails fetched") {
+		t.Errorf("expected message count in summary, got: %s", body)
+	}
+	if !strings.Contains(body, "2 errors") {
+		t.Errorf("expected error count in summary, got: %s", body)
 	}
 }
 

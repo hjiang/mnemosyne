@@ -26,6 +26,7 @@ type backupJobView struct {
 	Duration     string
 	Attempts     int
 	Progress     string // human-readable progress for running jobs
+	Summary      string // human-readable result summary for finished jobs
 }
 
 func (s *Server) backupsList(w http.ResponseWriter, r *http.Request) {
@@ -68,11 +69,18 @@ func (s *Server) backupsList(w http.ResponseWriter, r *http.Request) {
 				v.Duration = fmt.Sprintf("running for %s", d)
 			}
 
-			if j.State == "running" && j.Progress != "" {
+			if j.Progress != "" {
 				var prog backup.Progress
 				if err := json.Unmarshal([]byte(j.Progress), &prog); err == nil {
-					v.Progress = fmt.Sprintf("Syncing %s (%d/%d folders, %d messages)",
-						prog.Folder, prog.FolderIndex, prog.FolderTotal, prog.NewMessages)
+					if j.State == "running" {
+						v.Progress = fmt.Sprintf("Syncing %s (%d/%d folders, %d messages)",
+							prog.Folder, prog.FolderIndex, prog.FolderTotal, prog.NewMessages)
+					} else if prog.Done {
+						v.Summary = fmt.Sprintf("%d emails fetched", prog.NewMessages)
+						if prog.ErrorCount > 0 {
+							v.Summary += fmt.Sprintf(", %d errors", prog.ErrorCount)
+						}
+					}
 				}
 			}
 
