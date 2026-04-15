@@ -118,7 +118,7 @@ func TestAccounts_CrossUserFolders_404(t *testing.T) {
 	env := newAcctTestEnv(t)
 
 	// Create account for user B.
-	acctB, err := env.accounts.Create(env.userBID, "B's account", "host", 993, "u", "p", true)
+	acctB, err := env.accounts.Create(env.userBID, "B's account", "host", 993, "u", "p", true, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestAccounts_CrossUserFolders_404(t *testing.T) {
 func TestAccounts_BackupRun(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, err := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	acct, err := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestAccounts_BackupRun(t *testing.T) {
 func TestAccounts_FolderToggle(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
 
 	// Toggle on.

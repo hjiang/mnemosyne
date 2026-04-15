@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hjiang/mnemosyne/internal/accounts"
+	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
 	"github.com/hjiang/mnemosyne/internal/blobs"
 	"github.com/hjiang/mnemosyne/internal/db"
 	"github.com/hjiang/mnemosyne/internal/messages"
@@ -113,7 +114,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	host, portStr, _ := net.SplitHostPort(srv.Addr)
 	port, _ := strconv.Atoi(portStr)
 
-	acct, err := acctRepo.Create(1, "test", host, port, srv.Username, srv.Password, false)
+	acct, err := acctRepo.Create(1, "test", host, port, srv.Username, srv.Password, false, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +383,7 @@ func TestOrchestrator_UserIsolation(t *testing.T) {
 	}
 	hostA, portStrA, _ := net.SplitHostPort(srvA.Addr)
 	portA, _ := strconv.Atoi(portStrA)
-	acctA, _ := acctRepo.Create(1, "A", hostA, portA, srvA.Username, srvA.Password, false)
+	acctA, _ := acctRepo.Create(1, "A", hostA, portA, srvA.Username, srvA.Password, false, "", 0, "", "")
 	folderA, _ := acctRepo.CreateFolder(acctA.ID, "INBOX")
 	_ = acctRepo.SetFolderEnabled(folderA.ID, true)
 
@@ -395,7 +396,7 @@ func TestOrchestrator_UserIsolation(t *testing.T) {
 	}
 	hostB, portStrB, _ := net.SplitHostPort(srvB.Addr)
 	portB, _ := strconv.Atoi(portStrB)
-	acctB, _ := acctRepo.Create(2, "B", hostB, portB, srvB.Username, srvB.Password, false)
+	acctB, _ := acctRepo.Create(2, "B", hostB, portB, srvB.Username, srvB.Password, false, "", 0, "", "")
 	folderB, _ := acctRepo.CreateFolder(acctB.ID, "INBOX")
 	_ = acctRepo.SetFolderEnabled(folderB.ID, true)
 
@@ -1132,7 +1133,7 @@ func TestOrchestrator_RetryOnConnectionFailure(t *testing.T) {
 	env.imapSrv.SeedMessages(t, "INBOX", 5) // UIDs 1-5
 
 	dialCount := 0
-	env.orchestrator.dialFunc = func(_, _, _ string, _ bool) (IMAPClient, error) {
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
 		dialCount++
 		realClient := connectTestIMAP(t, env.imapSrv)
 		if dialCount <= 1 {
@@ -1166,7 +1167,7 @@ func TestOrchestrator_RetryStopsWithoutProgress(t *testing.T) {
 	env.imapSrv.SeedMessages(t, "INBOX", 3)
 
 	dialCount := 0
-	env.orchestrator.dialFunc = func(_, _, _ string, _ bool) (IMAPClient, error) {
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
 		dialCount++
 		realClient := connectTestIMAP(t, env.imapSrv)
 		// Every connection: EOF before any messages are received.

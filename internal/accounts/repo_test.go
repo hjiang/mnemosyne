@@ -45,7 +45,7 @@ func newTestEnv(t *testing.T) *testEnv {
 func TestCreate_And_GetByID(t *testing.T) {
 	env := newTestEnv(t)
 
-	acct, err := env.repo.Create(env.userA, "Gmail", "imap.gmail.com", 993, "alice", "pass123", true)
+	acct, err := env.repo.Create(env.userA, "Gmail", "imap.gmail.com", 993, "alice", "pass123", true, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestCreate_And_GetByID(t *testing.T) {
 func TestList_UserIsolation(t *testing.T) {
 	env := newTestEnv(t)
 
-	_, err := env.repo.Create(env.userA, "A's account", "host", 993, "a", "pass", true)
+	_, err := env.repo.Create(env.userA, "A's account", "host", 993, "a", "pass", true, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestList_UserIsolation(t *testing.T) {
 func TestGetByID_WrongUser(t *testing.T) {
 	env := newTestEnv(t)
 
-	acct, err := env.repo.Create(env.userA, "A's account", "host", 993, "a", "pass", true)
+	acct, err := env.repo.Create(env.userA, "A's account", "host", 993, "a", "pass", true, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestGetByID_WrongUser(t *testing.T) {
 func TestFolderCRUD(t *testing.T) {
 	env := newTestEnv(t)
 
-	acct, err := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true)
+	acct, err := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestFolderCRUD(t *testing.T) {
 
 func TestSetFolderEnabled(t *testing.T) {
 	env := newTestEnv(t)
-	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
 	folder, _ := env.repo.CreateFolder(acct.ID, "INBOX")
 
 	if err := env.repo.SetFolderEnabled(folder.ID, true); err != nil {
@@ -163,7 +163,7 @@ func TestSetFolderEnabled(t *testing.T) {
 
 func TestSetUIDValidity(t *testing.T) {
 	env := newTestEnv(t)
-	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
 	folder, _ := env.repo.CreateFolder(acct.ID, "INBOX")
 
 	if err := env.repo.SetUIDValidity(folder.ID, 12345); err != nil {
@@ -178,7 +178,7 @@ func TestSetUIDValidity(t *testing.T) {
 
 func TestSetLastSeenUID(t *testing.T) {
 	env := newTestEnv(t)
-	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
 	folder, _ := env.repo.CreateFolder(acct.ID, "INBOX")
 
 	if err := env.repo.SetLastSeenUID(folder.ID, 42); err != nil {
@@ -193,7 +193,7 @@ func TestSetLastSeenUID(t *testing.T) {
 
 func TestSetLastSyncAt(t *testing.T) {
 	env := newTestEnv(t)
-	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
 
 	if err := env.repo.SetLastSyncAt(acct.ID, 1712000000); err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestSetLastSyncAt(t *testing.T) {
 
 func TestCreate_NoTLS(t *testing.T) {
 	env := newTestEnv(t)
-	acct, err := env.repo.Create(env.userA, "NoTLS", "host", 143, "a", "pass", false)
+	acct, err := env.repo.Create(env.userA, "NoTLS", "host", 143, "a", "pass", false, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestRepo_DBErrors(t *testing.T) {
 
 	repo := NewRepo(database, km)
 
-	_, err = repo.Create(1, "x", "h", 993, "u", "p", true)
+	_, err = repo.Create(1, "x", "h", 993, "u", "p", true, "", 0, "", "")
 	if err == nil {
 		t.Error("expected Create error on closed DB")
 	}
@@ -275,7 +275,7 @@ func TestRepo_DBErrors(t *testing.T) {
 
 func TestSetFolderPolicy(t *testing.T) {
 	env := newTestEnv(t)
-	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
 	folder, _ := env.repo.CreateFolder(acct.ID, "INBOX")
 
 	newPolicy := `{"leave_on_server":"newest_n","n":50}`
@@ -291,7 +291,7 @@ func TestSetFolderPolicy(t *testing.T) {
 
 func TestCreateFolder_Idempotent(t *testing.T) {
 	env := newTestEnv(t)
-	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
 
 	_, err := env.repo.CreateFolder(acct.ID, "INBOX")
 	if err != nil {
@@ -306,5 +306,83 @@ func TestCreateFolder_Idempotent(t *testing.T) {
 	folders, _ := env.repo.ListFolders(acct.ID)
 	if len(folders) != 1 {
 		t.Errorf("expected 1 folder after duplicate create, got %d", len(folders))
+	}
+}
+
+func TestCreate_WithProxy(t *testing.T) {
+	env := newTestEnv(t)
+
+	acct, err := env.repo.Create(env.userA, "Corp", "imap.corp.com", 993, "user", "pass", true,
+		"proxy.corp.com", 1080, "proxyuser", "proxypass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.ProxyHost != "proxy.corp.com" {
+		t.Errorf("ProxyHost = %q, want %q", acct.ProxyHost, "proxy.corp.com")
+	}
+	if acct.ProxyPort != 1080 {
+		t.Errorf("ProxyPort = %d, want 1080", acct.ProxyPort)
+	}
+
+	got, err := env.repo.GetByID(acct.ID, env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProxyHost != "proxy.corp.com" {
+		t.Errorf("ProxyHost = %q, want %q", got.ProxyHost, "proxy.corp.com")
+	}
+	if got.ProxyPort != 1080 {
+		t.Errorf("ProxyPort = %d, want 1080", got.ProxyPort)
+	}
+	if got.ProxyUsername != "proxyuser" {
+		t.Errorf("ProxyUsername = %q, want %q", got.ProxyUsername, "proxyuser")
+	}
+	if got.ProxyPassword != "proxypass" {
+		t.Errorf("ProxyPassword = %q, want %q (decrypted)", got.ProxyPassword, "proxypass")
+	}
+}
+
+func TestCreate_WithoutProxy(t *testing.T) {
+	env := newTestEnv(t)
+
+	acct, err := env.repo.Create(env.userA, "Personal", "imap.gmail.com", 993, "user", "pass", true,
+		"", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := env.repo.GetByID(acct.ID, env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProxyHost != "" {
+		t.Errorf("ProxyHost = %q, want empty", got.ProxyHost)
+	}
+	if got.ProxyPassword != "" {
+		t.Errorf("ProxyPassword = %q, want empty", got.ProxyPassword)
+	}
+}
+
+func TestList_WithProxy(t *testing.T) {
+	env := newTestEnv(t)
+
+	_, err := env.repo.Create(env.userA, "WithProxy", "host", 993, "u", "p", true,
+		"proxy.example.com", 1080, "pu", "pp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	accounts, err := env.repo.List(env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+	if accounts[0].ProxyHost != "proxy.example.com" {
+		t.Errorf("ProxyHost = %q, want %q", accounts[0].ProxyHost, "proxy.example.com")
+	}
+	if accounts[0].ProxyPassword != "pp" {
+		t.Errorf("ProxyPassword = %q, want %q", accounts[0].ProxyPassword, "pp")
 	}
 }

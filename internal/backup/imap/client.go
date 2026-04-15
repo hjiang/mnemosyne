@@ -3,13 +3,17 @@
 package imap
 
 import (
+	"crypto/tls"
 	"fmt"
 	"mime"
+	"net"
 	"sort"
+	"time"
 
 	goiap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/charset"
+	"golang.org/x/net/proxy"
 )
 
 // FolderInfo contains metadata returned by SELECT.
@@ -30,22 +34,40 @@ type Envelope struct {
 	Size      int64
 }
 
+// ProxyConfig holds optional SOCKS5 proxy settings for IMAP connections.
+type ProxyConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+}
+
 // Client wraps an authenticated IMAP connection.
 type Client struct {
 	raw *imapclient.Client
 }
 
+// dialTimeout is the default TCP dial timeout.
+const dialTimeout = 30 * time.Second
+
 // Dial connects to an IMAP server, authenticates, and returns a Client.
-// Set tls to true for implicit TLS (port 993).
-func Dial(addr, username, password string, tls bool) (*Client, error) {
+// Set useTLS to true for implicit TLS (port 993).
+// If proxyConf is non-nil and has a non-empty Host, the connection is routed
+// through a SOCKS5 proxy.
+func Dial(addr, username, password string, useTLS bool, proxyConf *ProxyConfig) (*Client, error) {
 	opts := &imapclient.Options{
 		WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
 	}
+
 	var raw *imapclient.Client
 	var err error
-	if tls {
+
+	switch {
+	case proxyConf != nil && proxyConf.Host != "":
+		raw, err = dialViaProxy(addr, useTLS, proxyConf, opts)
+	case useTLS:
 		raw, err = imapclient.DialTLS(addr, opts)
-	} else {
+	default:
 		raw, err = imapclient.DialInsecure(addr, opts)
 	}
 	if err != nil {
@@ -58,6 +80,45 @@ func Dial(addr, username, password string, tls bool) (*Client, error) {
 	}
 
 	return &Client{raw: raw}, nil
+}
+
+// dialViaProxy establishes a connection through a SOCKS5 proxy.
+func dialViaProxy(addr string, useTLS bool, pc *ProxyConfig, opts *imapclient.Options) (*imapclient.Client, error) {
+	proxyAddr := net.JoinHostPort(pc.Host, fmt.Sprintf("%d", pc.Port))
+
+	var auth *proxy.Auth
+	if pc.Username != "" {
+		auth = &proxy.Auth{User: pc.Username, Password: pc.Password}
+	}
+
+	dialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, &net.Dialer{Timeout: dialTimeout})
+	if err != nil {
+		return nil, fmt.Errorf("creating SOCKS5 dialer: %w", err)
+	}
+
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("dialing via proxy: %w", err)
+	}
+
+	if useTLS {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			conn.Close() //nolint:errcheck,gosec
+			return nil, fmt.Errorf("parsing address for TLS: %w", err)
+		}
+		tlsConn := tls.Client(conn, &tls.Config{
+			ServerName: host,
+			NextProtos: []string{"imap"},
+		})
+		if err := tlsConn.Handshake(); err != nil {
+			tlsConn.Close() //nolint:errcheck,gosec
+			return nil, fmt.Errorf("TLS handshake: %w", err)
+		}
+		conn = tlsConn
+	}
+
+	return imapclient.New(conn, opts), nil
 }
 
 // Close logs out and closes the connection.

@@ -26,7 +26,7 @@ func TestBackups_Unauthenticated_Redirects(t *testing.T) {
 func TestBackups_ShowsJobs(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, err := env.accounts.Create(env.userAID, "Work Gmail", "imap.gmail.com", 993, "u", "p", true)
+	acct, err := env.accounts.Create(env.userAID, "Work Gmail", "imap.gmail.com", 993, "u", "p", true, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +55,8 @@ func TestBackups_ShowsJobs(t *testing.T) {
 func TestBackups_UserIsolation(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acctA, _ := env.accounts.Create(env.userAID, "Alice Mail", "host", 993, "u", "p", true)
-	acctB, _ := env.accounts.Create(env.userBID, "Bob Mail", "host", 993, "u", "p", true)
+	acctA, _ := env.accounts.Create(env.userAID, "Alice Mail", "host", 993, "u", "p", true, "", 0, "", "")
+	acctB, _ := env.accounts.Create(env.userBID, "Bob Mail", "host", 993, "u", "p", true, "", 0, "", "")
 
 	payloadA, _ := json.Marshal(scheduler.BackupPayload{AccountID: acctA.ID, UserID: env.userAID})
 	payloadB, _ := json.Marshal(scheduler.BackupPayload{AccountID: acctB.ID, UserID: env.userBID})
@@ -81,7 +81,7 @@ func TestBackups_UserIsolation(t *testing.T) {
 func TestBackups_FailedJobShowsError(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
 	j, err := env.server.queue.Enqueue("backup", string(payload))
 	if err != nil {
@@ -138,7 +138,7 @@ func TestBackups_DeletedAccountLabel(t *testing.T) {
 func TestBackupDetail_ShowsErrors(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
 	j, err := env.server.queue.Enqueue("backup", string(payload))
 	if err != nil {
@@ -169,7 +169,7 @@ func TestBackupDetail_ShowsErrors(t *testing.T) {
 func TestBackupDetail_UserIsolation(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
 	j, err := env.server.queue.Enqueue("backup", string(payload))
 	if err != nil {
@@ -201,7 +201,7 @@ func TestBackupDetail_NotFound(t *testing.T) {
 func TestBackups_DoneJobShowsSummary(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
 	j, err := env.server.queue.Enqueue("backup", string(payload))
 	if err != nil {
@@ -228,7 +228,7 @@ func TestBackups_DoneJobShowsSummary(t *testing.T) {
 func TestBackups_FailedJobShowsSummaryWithErrors(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
 	j, err := env.server.queue.Enqueue("backup", string(payload))
 	if err != nil {
@@ -258,7 +258,7 @@ func TestBackups_FailedJobShowsSummaryWithErrors(t *testing.T) {
 func TestBackupsList_FailedJobLinksToDetail(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	payload, _ := json.Marshal(scheduler.BackupPayload{AccountID: acct.ID, UserID: env.userAID})
 	j, err := env.server.queue.Enqueue("backup", string(payload))
 	if err != nil {
