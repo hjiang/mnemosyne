@@ -440,61 +440,6 @@ func (r *Repo) UpdateSubject(hash []byte, subject string) error {
 	return nil
 }
 
-// ListUnindexedMessages returns messages that have no FTS entry yet.
-func (r *Repo) ListUnindexedMessages() ([]*Message, error) {
-	rows, err := r.db.Query(
-		`SELECT m.hash, m.user_id, m.message_id, m.from_addr, m.to_addrs, m.cc_addrs,
-		        m.subject, m.date, m.size, m.has_attachments, COALESCE(m.body_text, '')
-		 FROM messages m
-		 WHERE m.rowid NOT IN (SELECT rowid FROM messages_fts)
-		 LIMIT 1000`)
-	if err != nil {
-		return nil, fmt.Errorf("listing unindexed messages: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck
-
-	var msgs []*Message
-	for rows.Next() {
-		var m Message
-		var hasAtt int
-		if err := rows.Scan(&m.Hash, &m.UserID, &m.MessageID, &m.FromAddr, &m.ToAddrs, &m.CcAddrs,
-			&m.Subject, &m.Date, &m.Size, &hasAtt, &m.BodyText); err != nil {
-			return nil, fmt.Errorf("scanning: %w", err)
-		}
-		m.HasAttachments = hasAtt == 1
-		msgs = append(msgs, &m)
-	}
-	return msgs, rows.Err()
-}
-
-// ListEmptyBodyText returns messages where body_text is empty or NULL.
-// Used to backfill body text from raw blobs.
-func (r *Repo) ListEmptyBodyText(limit int) ([]*Message, error) {
-	rows, err := r.db.Query(
-		`SELECT hash, user_id, message_id, from_addr, to_addrs, cc_addrs,
-		        subject, date, size, has_attachments, COALESCE(body_text, '')
-		 FROM messages
-		 WHERE body_text IS NULL OR body_text = ''
-		 LIMIT ?`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("listing empty body_text messages: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck
-
-	var msgs []*Message
-	for rows.Next() {
-		var m Message
-		var hasAtt int
-		if err := rows.Scan(&m.Hash, &m.UserID, &m.MessageID, &m.FromAddr, &m.ToAddrs, &m.CcAddrs,
-			&m.Subject, &m.Date, &m.Size, &hasAtt, &m.BodyText); err != nil {
-			return nil, fmt.Errorf("scanning: %w", err)
-		}
-		m.HasAttachments = hasAtt == 1
-		msgs = append(msgs, &m)
-	}
-	return msgs, rows.Err()
-}
-
 func boolToInt(b bool) int {
 	if b {
 		return 1
