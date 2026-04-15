@@ -168,10 +168,8 @@ func (c *Client) FetchEnvelopes(startUID, endUID uint32) ([]Envelope, error) {
 	}
 
 	bufs, err := c.raw.Fetch(uidSet, opts).Collect()
-	if err != nil {
-		return nil, fmt.Errorf("fetching envelopes: %w", err)
-	}
 
+	// Process whatever was received, even on error (partial results).
 	envs := make([]Envelope, 0, len(bufs))
 	for _, buf := range bufs {
 		env := Envelope{
@@ -192,6 +190,10 @@ func (c *Client) FetchEnvelopes(startUID, endUID uint32) ([]Envelope, error) {
 	}
 
 	sort.Slice(envs, func(i, j int) bool { return envs[i].UID < envs[j].UID })
+
+	if err != nil {
+		return envs, fmt.Errorf("fetching envelopes: %w", err)
+	}
 	return envs, nil
 }
 
