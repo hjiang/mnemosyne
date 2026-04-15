@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ type ProgressFunc func(p Progress)
 type Result struct {
 	NewMessages  int
 	NewLocations int
+	NewEnvelopes int // envelope fetches count as progress for retry decisions
 	Errors       []error
 }
 
@@ -151,22 +153,27 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 
 		// Retry loop: keep syncing as long as forward progress is made.
 		// On connection failure, reconnect and retry. Stop when no new
-		// locations are stored (no progress) or on non-connection errors.
+		// locations or envelopes are stored (no progress) or on non-connection errors.
+		var accEnvs []imapwrap.Envelope
 		for {
 			prevLocs := result.NewLocations
-			syncErr := o.syncFolder(client, folder, userID, result)
+			prevEnvs := result.NewEnvelopes
+			syncErr := o.syncFolder(client, folder, userID, result, &accEnvs)
 			if syncErr == nil {
+				accEnvs = nil
 				break
 			}
 
 			var ce *connError
 			if !errors.As(syncErr, &ce) {
 				result.Errors = append(result.Errors, fmt.Errorf("folder %q: %w", folder.Name, syncErr))
+				accEnvs = nil
 				break
 			}
 
-			if result.NewLocations == prevLocs {
+			if result.NewLocations == prevLocs && result.NewEnvelopes == prevEnvs {
 				result.Errors = append(result.Errors, fmt.Errorf("folder %q: no progress, giving up: %w", folder.Name, syncErr))
+				accEnvs = nil
 				break
 			}
 
@@ -200,6 +207,7 @@ func (o *Orchestrator) syncFolder(
 	folder *accounts.Folder,
 	userID int64,
 	result *Result,
+	envelopes *[]imapwrap.Envelope, // in/out: accumulated envelopes across retries
 ) error {
 	info, err := client.SelectFolder(folder.Name)
 	if err != nil {
@@ -225,19 +233,57 @@ func (o *Orchestrator) syncFolder(
 		return nil
 	}
 
-	startUID := folder.LastSeenUID + 1
-	envs, err := client.FetchEnvelopes(startUID, 0)
-	if err != nil {
-		return fmt.Errorf("fetching envelopes: %w", err)
+	// Merge prior envelopes (from previous retry attempts) with newly fetched ones.
+	envMap := make(map[uint32]imapwrap.Envelope)
+	for _, env := range *envelopes {
+		envMap[env.UID] = env
+	}
+
+	// Start fetching from after the highest UID we already have envelopes for.
+	fetchStartUID := folder.LastSeenUID + 1
+	if len(*envelopes) > 0 {
+		highest := (*envelopes)[len(*envelopes)-1].UID // sorted ascending
+		if highest >= fetchStartUID {
+			fetchStartUID = highest + 1
+		}
+	}
+
+	// Fetch remaining envelopes (may return partial results on connection error).
+	var envFetchErr error
+	newEnvs, fetchErr := client.FetchEnvelopes(fetchStartUID, 0)
+	if fetchErr != nil {
+		envFetchErr = fetchErr
+	}
+	for _, env := range newEnvs {
+		envMap[env.UID] = env
+	}
+	result.NewEnvelopes += len(newEnvs)
+
+	// Flatten to sorted slice and write back for caller to accumulate.
+	envs := make([]imapwrap.Envelope, 0, len(envMap))
+	for _, env := range envMap {
+		envs = append(envs, env)
+	}
+	sort.Slice(envs, func(i, j int) bool { return envs[i].UID < envs[j].UID })
+	*envelopes = envs
+
+	// If envelope fetch failed with nothing accumulated, signal connection error.
+	if envFetchErr != nil && len(envs) == 0 {
+		return &connError{err: fmt.Errorf("fetching envelopes: %w", envFetchErr)}
 	}
 
 	// Compute retention expunge set from all known messages (DB + new envelopes).
 	// This must happen before the early return so that previously-backed-up
 	// messages get cleaned up even when there are no new messages to fetch.
-	expungeSet, retentionErr := o.computeExpungeSet(folder, envs)
-	if retentionErr != nil {
-		result.Errors = append(result.Errors, fmt.Errorf("folder %q retention: %w", folder.Name, retentionErr))
-		expungeSet = nil // disable incremental deletion on error
+	// Skip retention when envelopes are incomplete — defer to next full sync.
+	var expungeSet map[uint32]bool
+	if envFetchErr == nil {
+		var retentionErr error
+		expungeSet, retentionErr = o.computeExpungeSet(folder, envs)
+		if retentionErr != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("folder %q retention: %w", folder.Name, retentionErr))
+			expungeSet = nil // disable incremental deletion on error
+		}
 	}
 
 	// Track which UIDs are confirmed backed up (for gating deletion).
@@ -268,14 +314,12 @@ func (o *Orchestrator) syncFolder(
 		return nil
 	}
 
-	// Build envelope lookup and list of UIDs that still need fetching.
-	envMap := make(map[uint32]imapwrap.Envelope, len(envs))
+	// Build list of UIDs that still need fetching (envMap already populated above).
 	var toFetch []uint32
 	var maxUID uint32
 	var hadError bool
 
 	for _, env := range envs {
-		envMap[env.UID] = env
 		if exists, _ := o.messages.LocationExistsByFolderAndUID(folder.ID, env.UID); exists {
 			if !hadError && env.UID > maxUID {
 				maxUID = env.UID
@@ -356,6 +400,9 @@ func (o *Orchestrator) syncFolder(
 
 	if batchErr != nil {
 		return &connError{err: batchErr}
+	}
+	if envFetchErr != nil {
+		return &connError{err: fmt.Errorf("fetching envelopes: %w", envFetchErr)}
 	}
 	return nil
 }

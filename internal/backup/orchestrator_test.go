@@ -35,6 +35,13 @@ type eofFetchClient struct {
 	succeedCount int // how many UIDs to return before simulating EOF
 }
 
+// eofEnvelopeClient wraps a real IMAPClient and simulates a connection failure
+// during FetchEnvelopes, returning only the first N envelopes.
+type eofEnvelopeClient struct {
+	IMAPClient
+	envelopeLimit int // how many envelopes to return before simulating EOF
+}
+
 func (f *failingFetchClient) FetchBody(uid uint32) ([]byte, error) {
 	f.fetchBodyCalls++
 	if f.failUIDs[uid] {
@@ -55,6 +62,17 @@ func (f *failingFetchClient) FetchBodies(uids []uint32) (map[uint32][]byte, []ui
 		found[uid] = body
 	}
 	return found, missing, nil
+}
+
+func (e *eofEnvelopeClient) FetchEnvelopes(startUID, endUID uint32) ([]imapwrap.Envelope, error) {
+	envs, err := e.IMAPClient.FetchEnvelopes(startUID, endUID)
+	if err != nil {
+		return envs, err
+	}
+	if len(envs) <= e.envelopeLimit {
+		return envs, nil
+	}
+	return envs[:e.envelopeLimit], fmt.Errorf("in response-data: unexpected EOF")
 }
 
 func (e *eofFetchClient) FetchBodies(uids []uint32) (map[uint32][]byte, []uint32, error) {
@@ -774,7 +792,7 @@ func TestOrchestrator_LastSeenUID_NotAdvancedPastFailures(t *testing.T) {
 	}
 
 	result := &Result{}
-	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result, &[]imapwrap.Envelope{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -831,7 +849,7 @@ func TestOrchestrator_RetrySkipsAlreadyStored(t *testing.T) {
 	}
 
 	result := &Result{}
-	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result, &[]imapwrap.Envelope{}); err != nil {
 		t.Fatal(err)
 	}
 	if result.NewMessages != 4 {
@@ -855,7 +873,7 @@ func TestOrchestrator_RetrySkipsAlreadyStored(t *testing.T) {
 		failUIDs:   map[uint32]bool{},
 	}
 	result2 := &Result{}
-	if err := env.orchestrator.syncFolder(wrapped2, folder, env.userID, result2); err != nil {
+	if err := env.orchestrator.syncFolder(wrapped2, folder, env.userID, result2, &[]imapwrap.Envelope{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -932,7 +950,7 @@ func TestOrchestrator_NoRetentionOnPartialFailure(t *testing.T) {
 	}
 
 	result := &Result{}
-	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result, &[]imapwrap.Envelope{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -994,7 +1012,7 @@ func TestOrchestrator_IncrementalRetentionPartialFailure(t *testing.T) {
 	}
 
 	result := &Result{}
-	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result); err != nil {
+	if err := env.orchestrator.syncFolder(wrapped, folder, env.userID, result, &[]imapwrap.Envelope{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1087,7 +1105,7 @@ func TestOrchestrator_BatchEOF_NoSpuriousErrors(t *testing.T) {
 	}
 
 	result := &Result{}
-	syncErr := env.orchestrator.syncFolder(wrapped, folder, env.userID, result)
+	syncErr := env.orchestrator.syncFolder(wrapped, folder, env.userID, result, &[]imapwrap.Envelope{})
 
 	// syncFolder should return a *connError wrapping the EOF.
 	var ce *connError
@@ -1184,7 +1202,79 @@ func TestOrchestrator_RetryStopsWithoutProgress(t *testing.T) {
 		t.Errorf("NewMessages = %d, want 0", result.NewMessages)
 	}
 
-	// Should have dialed exactly once — no reconnect since no progress was made.
+	// Dialed twice: first attempt fetches envelopes (counts as progress), retries.
+	// Second attempt has cached envelopes (no new envelopes) and bodies still fail,
+	// so no progress is made and it gives up.
+	if dialCount != 2 {
+		t.Errorf("dialCount = %d, want 2 (retry once for envelope progress, then stop)", dialCount)
+	}
+
+	// Should have errors reported.
+	if len(result.Errors) == 0 {
+		t.Error("expected errors to be reported")
+	}
+}
+
+// Test: Run() retries when envelope fetching makes partial progress.
+// First connection returns only 2 of 5 envelopes + EOF, second works normally.
+func TestOrchestrator_EnvelopeFetchEOF_PartialRetry(t *testing.T) {
+	env := newTestEnv(t)
+	enableFolder(t, env, "INBOX")
+	env.imapSrv.SeedMessages(t, "INBOX", 5) // UIDs 1-5
+
+	dialCount := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		dialCount++
+		realClient := connectTestIMAP(t, env.imapSrv)
+		if dialCount <= 1 {
+			// First connection: envelope EOF after 2 envelopes.
+			return &eofEnvelopeClient{IMAPClient: realClient, envelopeLimit: 2}, nil
+		}
+		// Subsequent connections: work normally.
+		return realClient, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// All 5 messages should be stored across the two attempts.
+	if result.NewMessages != 5 {
+		t.Errorf("NewMessages = %d, want 5", result.NewMessages)
+	}
+
+	// Should have dialed at least twice (initial + one reconnect).
+	if dialCount < 2 {
+		t.Errorf("dialCount = %d, want >= 2", dialCount)
+	}
+}
+
+// Test: Run() stops retrying when envelope fetching makes no progress.
+func TestOrchestrator_EnvelopeFetchEOF_NoProgress(t *testing.T) {
+	env := newTestEnv(t)
+	enableFolder(t, env, "INBOX")
+	env.imapSrv.SeedMessages(t, "INBOX", 3)
+
+	dialCount := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		dialCount++
+		realClient := connectTestIMAP(t, env.imapSrv)
+		// Every connection: 0 envelopes before EOF.
+		return &eofEnvelopeClient{IMAPClient: realClient, envelopeLimit: 0}, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No messages should be stored.
+	if result.NewMessages != 0 {
+		t.Errorf("NewMessages = %d, want 0", result.NewMessages)
+	}
+
+	// Should have dialed exactly once — no progress, no retry.
 	if dialCount != 1 {
 		t.Errorf("dialCount = %d, want 1 (should not retry without progress)", dialCount)
 	}
