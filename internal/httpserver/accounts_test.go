@@ -186,3 +186,120 @@ func TestAccounts_FolderToggle(t *testing.T) {
 		t.Error("expected folder to be disabled after toggle off")
 	}
 }
+
+func TestAccounts_EditForm(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, err := env.accounts.Create(env.userAID, "My Gmail", "imap.gmail.com", 993, "alice", "pass", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := env.doRequest(t, "GET", fmt.Sprintf("/accounts/%d/edit", acct.ID), env.cookieA, nil)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "My Gmail") {
+		t.Error("expected account label in edit form")
+	}
+	if !strings.Contains(body, "imap.gmail.com") {
+		t.Error("expected host in edit form")
+	}
+}
+
+// isolation — user A cannot edit user B's account
+func TestAccounts_EditForm_CrossUser_404(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acctB, err := env.accounts.Create(env.userBID, "B's account", "host", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := env.doRequest(t, "GET", fmt.Sprintf("/accounts/%d/edit", acctB.ID), env.cookieA, nil)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestAccounts_Update(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, err := env.accounts.Create(env.userAID, "Old", "old.host", 993, "olduser", "oldpass", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := env.doRequest(t, "POST", fmt.Sprintf("/accounts/%d/edit", acct.ID), env.cookieA, url.Values{
+		"label":    {"New Label"},
+		"host":     {"new.host.com"},
+		"port":     {"143"},
+		"username": {"newuser"},
+		"password": {"newpass"},
+	})
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusSeeOther)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/accounts" {
+		t.Errorf("Location = %q, want /accounts", loc)
+	}
+
+	got, _ := env.accounts.GetByID(acct.ID, env.userAID)
+	if got.Label != "New Label" {
+		t.Errorf("Label = %q, want %q", got.Label, "New Label")
+	}
+	if got.Host != "new.host.com" {
+		t.Errorf("Host = %q, want %q", got.Host, "new.host.com")
+	}
+	if got.Password != "newpass" {
+		t.Errorf("Password = %q, want %q", got.Password, "newpass")
+	}
+}
+
+func TestAccounts_Update_KeepsPassword(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, err := env.accounts.Create(env.userAID, "Test", "host", 993, "user", "secret", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Submit with empty password field — should keep existing password.
+	rr := env.doRequest(t, "POST", fmt.Sprintf("/accounts/%d/edit", acct.ID), env.cookieA, url.Values{
+		"label":    {"Test"},
+		"host":     {"host"},
+		"port":     {"993"},
+		"username": {"user"},
+		"password": {""},
+	})
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusSeeOther)
+	}
+
+	got, _ := env.accounts.GetByID(acct.ID, env.userAID)
+	if got.Password != "secret" {
+		t.Errorf("Password = %q, want %q (should be preserved)", got.Password, "secret")
+	}
+}
+
+// isolation — user A cannot update user B's account
+func TestAccounts_Update_CrossUser_404(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acctB, err := env.accounts.Create(env.userBID, "B's account", "host", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := env.doRequest(t, "POST", fmt.Sprintf("/accounts/%d/edit", acctB.ID), env.cookieA, url.Values{
+		"label":    {"Hacked"},
+		"host":     {"evil.com"},
+		"port":     {"993"},
+		"username": {"hacker"},
+		"password": {"hacked"},
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}

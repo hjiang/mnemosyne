@@ -64,6 +64,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		"browse.html": template.Must(template.New("layout.html").Funcs(funcMap).ParseFS(
 			templateFS, "templates/layout.html", "templates/browse.html", "templates/browse_messages.html")),
 		"browse_messages.html": parseStandalone("browse_messages.html"),
+		"account_edit.html":    parsePage("account_edit.html"),
 	}
 
 	s := &Server{
@@ -90,6 +91,8 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		r.Get("/", s.home)
 		r.Get("/accounts", s.accountsList)
 		r.Post("/accounts", s.accountCreate)
+		r.Get("/accounts/{id}/edit", s.accountEdit)
+		r.Post("/accounts/{id}/edit", s.accountUpdate)
 		r.Get("/accounts/{id}/folders", s.accountFolders)
 		r.Post("/accounts/{id}/folders/{folderID}/toggle", s.folderToggle)
 		r.Post("/accounts/{id}/folders/{folderID}/policy", s.folderPolicyUpdate)

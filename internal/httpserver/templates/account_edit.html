@@ -1,0 +1,54 @@
+{{define "content"}}
+    <div class="page-header">
+        <h2>Edit Account</h2>
+        <p>{{.Account.Label}}</p>
+    </div>
+
+    {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+
+    <div class="form-section">
+        <form method="POST" action="/accounts/{{.Account.ID}}/edit">
+            <div class="form-grid">
+                <label class="full-width">Label
+                    <input type="text" name="label" value="{{.Account.Label}}" required>
+                </label>
+                <label>Host
+                    <input type="text" name="host" value="{{.Account.Host}}" required>
+                </label>
+                <label>Port
+                    <input type="number" name="port" value="{{.Account.Port}}" required>
+                </label>
+                <label>Username
+                    <input type="text" name="username" value="{{.Account.Username}}" required>
+                </label>
+                <label>Password
+                    <input type="password" name="password" placeholder="(unchanged)">
+                </label>
+                <label class="full-width">
+                    <input type="checkbox" name="use_tls" {{if .Account.UseTLS}}checked{{end}}> Use TLS
+                </label>
+            </div>
+            <details {{if .Account.ProxyHost}}open{{end}}>
+                <summary>SOCKS5 Proxy (optional)</summary>
+                <div class="form-grid">
+                    <label>Proxy Host
+                        <input type="text" name="proxy_host" value="{{.Account.ProxyHost}}" placeholder="127.0.0.1">
+                    </label>
+                    <label>Proxy Port
+                        <input type="number" name="proxy_port" value="{{if .Account.ProxyPort}}{{.Account.ProxyPort}}{{end}}" placeholder="1080">
+                    </label>
+                    <label>Proxy Username
+                        <input type="text" name="proxy_username" value="{{.Account.ProxyUsername}}" placeholder="(optional)">
+                    </label>
+                    <label>Proxy Password
+                        <input type="password" name="proxy_password" placeholder="(unchanged)">
+                    </label>
+                </div>
+            </details>
+            <div class="account-actions">
+                <button type="submit">Save changes</button>
+                <a href="/accounts" role="button" class="outline">Cancel</a>
+            </div>
+        </form>
+    </div>
+{{end}}

@@ -271,6 +271,10 @@ func TestRepo_DBErrors(t *testing.T) {
 	if err := repo.SetFolderPolicy(1, `{"leave_on_server":"all"}`); err == nil {
 		t.Error("expected SetFolderPolicy error on closed DB")
 	}
+
+	if err := repo.Update(1, 1, "x", "h", 993, "u", "p", true, "", 0, "", ""); err == nil {
+		t.Error("expected Update error on closed DB")
+	}
 }
 
 func TestSetFolderPolicy(t *testing.T) {
@@ -384,5 +388,110 @@ func TestList_WithProxy(t *testing.T) {
 	}
 	if accounts[0].ProxyPassword != "pp" {
 		t.Errorf("ProxyPassword = %q, want %q", accounts[0].ProxyPassword, "pp")
+	}
+}
+
+func TestUpdate(t *testing.T) {
+	env := newTestEnv(t)
+
+	acct, err := env.repo.Create(env.userA, "Old Label", "old.host.com", 993, "olduser", "oldpass", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = env.repo.Update(acct.ID, env.userA, "New Label", "new.host.com", 143, "newuser", "newpass", false, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := env.repo.GetByID(acct.ID, env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Label != "New Label" {
+		t.Errorf("Label = %q, want %q", got.Label, "New Label")
+	}
+	if got.Host != "new.host.com" {
+		t.Errorf("Host = %q, want %q", got.Host, "new.host.com")
+	}
+	if got.Port != 143 {
+		t.Errorf("Port = %d, want 143", got.Port)
+	}
+	if got.Username != "newuser" {
+		t.Errorf("Username = %q, want %q", got.Username, "newuser")
+	}
+	if got.Password != "newpass" {
+		t.Errorf("Password = %q, want %q", got.Password, "newpass")
+	}
+	if got.UseTLS {
+		t.Error("expected UseTLS = false")
+	}
+}
+
+// isolation — 100% coverage required
+func TestUpdate_UserIsolation(t *testing.T) {
+	env := newTestEnv(t)
+
+	acct, err := env.repo.Create(env.userA, "A's account", "host", 993, "a", "pass", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = env.repo.Update(acct.ID, env.userB, "Hacked", "evil.com", 993, "hacker", "hacked", true, "", 0, "", "")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for wrong user, got %v", err)
+	}
+
+	// Verify original values unchanged.
+	got, _ := env.repo.GetByID(acct.ID, env.userA)
+	if got.Label != "A's account" {
+		t.Errorf("Label = %q, want %q (should be unchanged)", got.Label, "A's account")
+	}
+}
+
+func TestUpdate_WithProxy(t *testing.T) {
+	env := newTestEnv(t)
+
+	acct, err := env.repo.Create(env.userA, "Test", "host", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add proxy settings via update.
+	err = env.repo.Update(acct.ID, env.userA, "Test", "host", 993, "u", "p", true,
+		"proxy.example.com", 1080, "pu", "pp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := env.repo.GetByID(acct.ID, env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProxyHost != "proxy.example.com" {
+		t.Errorf("ProxyHost = %q, want %q", got.ProxyHost, "proxy.example.com")
+	}
+	if got.ProxyPort != 1080 {
+		t.Errorf("ProxyPort = %d, want 1080", got.ProxyPort)
+	}
+	if got.ProxyUsername != "pu" {
+		t.Errorf("ProxyUsername = %q, want %q", got.ProxyUsername, "pu")
+	}
+	if got.ProxyPassword != "pp" {
+		t.Errorf("ProxyPassword = %q, want %q", got.ProxyPassword, "pp")
+	}
+
+	// Remove proxy settings via update.
+	err = env.repo.Update(acct.ID, env.userA, "Test", "host", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ = env.repo.GetByID(acct.ID, env.userA)
+	if got.ProxyHost != "" {
+		t.Errorf("ProxyHost = %q, want empty", got.ProxyHost)
+	}
+	if got.ProxyPassword != "" {
+		t.Errorf("ProxyPassword = %q, want empty", got.ProxyPassword)
 	}
 }

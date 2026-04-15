@@ -271,6 +271,84 @@ func (s *Server) backupRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) accountEdit(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	accountID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	acct, err := s.accounts.GetByID(accountID, userID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	s.render(w, r, "account_edit.html", map[string]any{
+		"Title":   fmt.Sprintf("Edit — %s", acct.Label),
+		"Account": acct,
+	})
+}
+
+func (s *Server) accountUpdate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	userID := auth.UserIDFromContext(r.Context())
+	accountID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	acct, err := s.accounts.GetByID(accountID, userID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	label := r.FormValue("label")
+	host := r.FormValue("host")
+	portStr := r.FormValue("port")
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+	useTLS := r.FormValue("use_tls") == "on"
+	proxyHost := r.FormValue("proxy_host")
+	proxyPortStr := r.FormValue("proxy_port")
+	proxyUsername := r.FormValue("proxy_username")
+	proxyPassword := r.FormValue("proxy_password")
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		s.render(w, r, "account_edit.html", map[string]any{"Title": "Edit Account", "Account": acct, "Error": "Invalid port."})
+		return
+	}
+
+	var proxyPort int
+	if proxyPortStr != "" {
+		proxyPort, err = strconv.Atoi(proxyPortStr)
+		if err != nil {
+			s.render(w, r, "account_edit.html", map[string]any{"Title": "Edit Account", "Account": acct, "Error": "Invalid proxy port."})
+			return
+		}
+	}
+
+	// Keep existing passwords if the user left the fields blank.
+	if password == "" {
+		password = acct.Password
+	}
+	if proxyPassword == "" {
+		proxyPassword = acct.ProxyPassword
+	}
+
+	if err := s.accounts.Update(accountID, userID, label, host, port, username, password, useTLS,
+		proxyHost, proxyPort, proxyUsername, proxyPassword); err != nil {
+		s.render(w, r, "account_edit.html", map[string]any{"Title": "Edit Account", "Account": acct, "Error": "Failed to update account."})
+		return
+	}
+
+	http.Redirect(w, r, "/accounts", http.StatusSeeOther)
+}
+
 func (s *Server) discoverFolders(acct *accounts.Account) {
 	addr := fmt.Sprintf("%s:%d", acct.Host, acct.Port)
 

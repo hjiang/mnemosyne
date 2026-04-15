@@ -13,6 +13,7 @@
         </header>
         <span class="account-meta"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>{{.Host}}:{{.Port}}</span>
         <div class="account-actions">
+            <a href="/accounts/{{.ID}}/edit" role="button" class="outline">Edit</a>
             <a href="/accounts/{{.ID}}/folders" role="button" class="outline">Manage folders</a>
             <form method="POST" action="/accounts/{{.ID}}/backup">
                 <button type="submit" class="outline">Backup now</button>

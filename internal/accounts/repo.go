@@ -257,6 +257,42 @@ func (r *Repo) SetFolderPolicy(folderID int64, policyJSON string) error {
 	return nil
 }
 
+// Update modifies an existing IMAP account. The password is re-encrypted before storage.
+// enforces user isolation
+func (r *Repo) Update(id, userID int64, label, host string, port int, username, password string, useTLS bool, proxyHost string, proxyPort int, proxyUsername, proxyPassword string) error {
+	enc, err := r.km.Encrypt([]byte(password))
+	if err != nil {
+		return fmt.Errorf("encrypting password: %w", err)
+	}
+
+	proxyPwdEnc := []byte{}
+	if proxyPassword != "" {
+		proxyPwdEnc, err = r.km.Encrypt([]byte(proxyPassword))
+		if err != nil {
+			return fmt.Errorf("encrypting proxy password: %w", err)
+		}
+	}
+
+	res, err := r.db.Exec(
+		`UPDATE imap_accounts
+		 SET label=?, host=?, port=?, username=?, password_enc=?, use_tls=?,
+		     proxy_host=?, proxy_port=?, proxy_username=?, proxy_password_enc=?
+		 WHERE id=? AND user_id=?`,
+		label, host, port, username, enc, boolToInt(useTLS),
+		proxyHost, proxyPort, proxyUsername, proxyPwdEnc,
+		id, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("updating account: %w", err)
+	}
+
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetLastSyncAt records when the account was last synced.
 func (r *Repo) SetLastSyncAt(accountID int64, ts int64) error {
 	_, err := r.db.Exec("UPDATE imap_accounts SET last_sync_at = ? WHERE id = ?", ts, accountID)
