@@ -63,11 +63,11 @@ func TestNew_InvalidSchedule(t *testing.T) {
 func TestEnqueueAll(t *testing.T) {
 	env := newSchedTestEnv(t)
 
-	acct1, _ := env.accounts.Create(1, "A", "host", 993, "u", "p", true)
+	acct1, _ := env.accounts.Create(1, "A", "host", 993, "u", "p", true, "", 0, "", "")
 	folder1, _ := env.accounts.CreateFolder(acct1.ID, "INBOX")
 	_ = env.accounts.SetFolderEnabled(folder1.ID, true)
 
-	acct2, _ := env.accounts.Create(1, "B", "host2", 993, "u", "p", true)
+	acct2, _ := env.accounts.Create(1, "B", "host2", 993, "u", "p", true, "", 0, "", "")
 	_, _ = env.accounts.CreateFolder(acct2.ID, "INBOX") // not enabled
 
 	s, err := New("0 3 * * *", env.accounts, env.queue)
@@ -101,7 +101,7 @@ func TestEnqueueAll(t *testing.T) {
 func TestEnqueueAll_DisabledSkipped(t *testing.T) {
 	env := newSchedTestEnv(t)
 
-	acct, _ := env.accounts.Create(1, "A", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(1, "A", "host", 993, "u", "p", true, "", 0, "", "")
 	_, _ = env.accounts.CreateFolder(acct.ID, "INBOX") // not enabled
 
 	s, err := New("0 3 * * *", env.accounts, env.queue)
@@ -124,7 +124,7 @@ func TestEnqueueAll_DisabledSkipped(t *testing.T) {
 func TestPayloadShape(t *testing.T) {
 	env := newSchedTestEnv(t)
 
-	acct, _ := env.accounts.Create(1, "A", "host", 993, "u", "p", true)
+	acct, _ := env.accounts.Create(1, "A", "host", 993, "u", "p", true, "", 0, "", "")
 	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
 	_ = env.accounts.SetFolderEnabled(folder.ID, true)
 

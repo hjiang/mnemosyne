@@ -37,6 +37,10 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 	useTLS := r.FormValue("use_tls") == "on"
+	proxyHost := r.FormValue("proxy_host")
+	proxyPortStr := r.FormValue("proxy_port")
+	proxyUsername := r.FormValue("proxy_username")
+	proxyPassword := r.FormValue("proxy_password")
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
@@ -44,14 +48,24 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	acct, err := s.accounts.Create(userID, label, host, port, username, password, useTLS)
+	var proxyPort int
+	if proxyPortStr != "" {
+		proxyPort, err = strconv.Atoi(proxyPortStr)
+		if err != nil {
+			s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Invalid proxy port."})
+			return
+		}
+	}
+
+	acct, err := s.accounts.Create(userID, label, host, port, username, password, useTLS,
+		proxyHost, proxyPort, proxyUsername, proxyPassword)
 	if err != nil {
 		s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Failed to create account."})
 		return
 	}
 
 	// Auto-discover folders from the IMAP server.
-	go s.discoverFolders(acct.ID, host, port, username, password, useTLS)
+	go s.discoverFolders(acct)
 
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }
@@ -71,7 +85,7 @@ func (s *Server) accountFolders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sync folder list from the IMAP server (creates new folders, preserves existing).
-	s.discoverFolders(accountID, acct.Host, acct.Port, acct.Username, acct.Password, acct.UseTLS)
+	s.discoverFolders(acct)
 
 	folders, err := s.accounts.ListFolders(accountID)
 	if err != nil {
@@ -257,25 +271,36 @@ func (s *Server) backupRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) discoverFolders(accountID int64, host string, port int, username, password string, useTLS bool) {
-	addr := fmt.Sprintf("%s:%d", host, port)
-	client, err := imapwrap.Dial(addr, username, password, useTLS)
+func (s *Server) discoverFolders(acct *accounts.Account) {
+	addr := fmt.Sprintf("%s:%d", acct.Host, acct.Port)
+
+	var proxyConf *imapwrap.ProxyConfig
+	if acct.ProxyHost != "" {
+		proxyConf = &imapwrap.ProxyConfig{
+			Host:     acct.ProxyHost,
+			Port:     acct.ProxyPort,
+			Username: acct.ProxyUsername,
+			Password: acct.ProxyPassword,
+		}
+	}
+
+	client, err := imapwrap.Dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
 	if err != nil {
-		log.Printf("folder discovery for account %d: connect failed: %q", accountID, err) //nolint:gosec // accountID is int, err is quoted
+		log.Printf("folder discovery for account %d: connect failed: %q", acct.ID, err) //nolint:gosec // accountID is int, err is quoted
 		return
 	}
 	defer client.Close() //nolint:errcheck
 
 	names, err := client.ListFolders()
 	if err != nil {
-		log.Printf("folder discovery for account %d: list failed: %q", accountID, err) //nolint:gosec // accountID is int, err is quoted
+		log.Printf("folder discovery for account %d: list failed: %q", acct.ID, err) //nolint:gosec // accountID is int, err is quoted
 		return
 	}
 
 	for _, name := range names {
-		if _, err := s.accounts.CreateFolder(accountID, name); err != nil {
-			log.Printf("folder discovery for account %d: creating %q: %q", accountID, name, err) //nolint:gosec // all values quoted
+		if _, err := s.accounts.CreateFolder(acct.ID, name); err != nil {
+			log.Printf("folder discovery for account %d: creating %q: %q", acct.ID, name, err) //nolint:gosec // all values quoted
 		}
 	}
-	log.Printf("folder discovery for account %d: found %d folders", accountID, len(names)) //nolint:gosec // no untrusted input
+	log.Printf("folder discovery for account %d: found %d folders", acct.ID, len(names)) //nolint:gosec // no untrusted input
 }

@@ -28,7 +28,7 @@ func TestUploadToIMAP_Success(t *testing.T) {
 	}
 
 	// Verify messages are on the server.
-	c, err := imapwrap.Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := imapwrap.Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

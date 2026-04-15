@@ -23,6 +23,12 @@ type Account struct {
 	Password   string // decrypted
 	UseTLS     bool
 	LastSyncAt *int64
+
+	// Optional SOCKS5 proxy. Empty ProxyHost means no proxy.
+	ProxyHost     string
+	ProxyPort     int
+	ProxyUsername string
+	ProxyPassword string // decrypted
 }
 
 // Folder represents an IMAP folder within an account.
@@ -49,16 +55,25 @@ func NewRepo(db *sql.DB, km *KeyManager) *Repo {
 
 // Create inserts a new IMAP account. The password is encrypted before storage.
 // enforces user isolation
-func (r *Repo) Create(userID int64, label, host string, port int, username, password string, useTLS bool) (*Account, error) {
+func (r *Repo) Create(userID int64, label, host string, port int, username, password string, useTLS bool, proxyHost string, proxyPort int, proxyUsername, proxyPassword string) (*Account, error) {
 	enc, err := r.km.Encrypt([]byte(password))
 	if err != nil {
 		return nil, fmt.Errorf("encrypting password: %w", err)
 	}
 
+	proxyPwdEnc := []byte{}
+	if proxyPassword != "" {
+		proxyPwdEnc, err = r.km.Encrypt([]byte(proxyPassword))
+		if err != nil {
+			return nil, fmt.Errorf("encrypting proxy password: %w", err)
+		}
+	}
+
 	res, err := r.db.Exec(
-		`INSERT INTO imap_accounts (user_id, label, host, port, username, password_enc, use_tls)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO imap_accounts (user_id, label, host, port, username, password_enc, use_tls, proxy_host, proxy_port, proxy_username, proxy_password_enc)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		userID, label, host, port, username, enc, boolToInt(useTLS),
+		proxyHost, proxyPort, proxyUsername, proxyPwdEnc,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("inserting account: %w", err)
@@ -69,6 +84,8 @@ func (r *Repo) Create(userID int64, label, host string, port int, username, pass
 		ID: id, UserID: userID, Label: label,
 		Host: host, Port: port, Username: username,
 		Password: password, UseTLS: useTLS,
+		ProxyHost: proxyHost, ProxyPort: proxyPort,
+		ProxyUsername: proxyUsername, ProxyPassword: proxyPassword,
 	}, nil
 }
 
@@ -76,13 +93,15 @@ func (r *Repo) Create(userID int64, label, host string, port int, username, pass
 // enforces user isolation
 func (r *Repo) GetByID(id, userID int64) (*Account, error) {
 	var a Account
-	var encPwd []byte
+	var encPwd, proxyPwdEnc []byte
 	var tls int
 	err := r.db.QueryRow(
-		`SELECT id, user_id, label, host, port, username, password_enc, use_tls, last_sync_at
+		`SELECT id, user_id, label, host, port, username, password_enc, use_tls, last_sync_at,
+		        proxy_host, proxy_port, proxy_username, proxy_password_enc
 		 FROM imap_accounts WHERE id = ? AND user_id = ?`,
 		id, userID,
-	).Scan(&a.ID, &a.UserID, &a.Label, &a.Host, &a.Port, &a.Username, &encPwd, &tls, &a.LastSyncAt)
+	).Scan(&a.ID, &a.UserID, &a.Label, &a.Host, &a.Port, &a.Username, &encPwd, &tls, &a.LastSyncAt,
+		&a.ProxyHost, &a.ProxyPort, &a.ProxyUsername, &proxyPwdEnc)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -96,6 +115,14 @@ func (r *Repo) GetByID(id, userID int64) (*Account, error) {
 	}
 	a.Password = string(pwd)
 	a.UseTLS = tls == 1
+
+	if len(proxyPwdEnc) > 0 {
+		proxyPwd, err := r.km.Decrypt(proxyPwdEnc)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting proxy password: %w", err)
+		}
+		a.ProxyPassword = string(proxyPwd)
+	}
 	return &a, nil
 }
 
@@ -103,7 +130,8 @@ func (r *Repo) GetByID(id, userID int64) (*Account, error) {
 // enforces user isolation
 func (r *Repo) List(userID int64) ([]*Account, error) {
 	rows, err := r.db.Query(
-		`SELECT id, user_id, label, host, port, username, password_enc, use_tls, last_sync_at
+		`SELECT id, user_id, label, host, port, username, password_enc, use_tls, last_sync_at,
+		        proxy_host, proxy_port, proxy_username, proxy_password_enc
 		 FROM imap_accounts WHERE user_id = ?`,
 		userID,
 	)
@@ -115,9 +143,10 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 	var accounts []*Account
 	for rows.Next() {
 		var a Account
-		var encPwd []byte
+		var encPwd, proxyPwdEnc []byte
 		var tls int
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Label, &a.Host, &a.Port, &a.Username, &encPwd, &tls, &a.LastSyncAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Label, &a.Host, &a.Port, &a.Username, &encPwd, &tls, &a.LastSyncAt,
+			&a.ProxyHost, &a.ProxyPort, &a.ProxyUsername, &proxyPwdEnc); err != nil {
 			return nil, fmt.Errorf("scanning account: %w", err)
 		}
 		pwd, err := r.km.Decrypt(encPwd)
@@ -126,6 +155,13 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 		}
 		a.Password = string(pwd)
 		a.UseTLS = tls == 1
+		if len(proxyPwdEnc) > 0 {
+			proxyPwd, err := r.km.Decrypt(proxyPwdEnc)
+			if err != nil {
+				return nil, fmt.Errorf("decrypting proxy password: %w", err)
+			}
+			a.ProxyPassword = string(proxyPwd)
+		}
 		accounts = append(accounts, &a)
 	}
 	return accounts, rows.Err()

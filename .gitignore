@@ -21,3 +21,4 @@ data/
 secret.key
 /mnemosyne
 .claude/settings.local.json
+/vendor/

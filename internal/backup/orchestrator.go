@@ -69,7 +69,7 @@ type Orchestrator struct {
 	accounts *accounts.Repo
 	messages *messages.Repo
 	blobs    *blobs.Store
-	dialFunc func(addr, user, pass string, tls bool) (IMAPClient, error) // nil = use imapwrap.Dial
+	dialFunc func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
 }
 
 // NewOrchestrator creates a backup orchestrator.
@@ -81,11 +81,11 @@ func NewOrchestrator(accts *accounts.Repo, msgs *messages.Repo, store *blobs.Sto
 	}
 }
 
-func (o *Orchestrator) dial(addr, user, pass string, tls bool) (IMAPClient, error) {
+func (o *Orchestrator) dial(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) {
 	if o.dialFunc != nil {
-		return o.dialFunc(addr, user, pass, tls)
+		return o.dialFunc(addr, user, pass, tls, proxyConf)
 	}
-	return imapwrap.Dial(addr, user, pass, tls)
+	return imapwrap.Dial(addr, user, pass, tls, proxyConf)
 }
 
 func (o *Orchestrator) reloadFolder(accountID, folderID int64) *accounts.Folder {
@@ -110,7 +110,16 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 	}
 
 	addr := fmt.Sprintf("%s:%d", acct.Host, acct.Port)
-	client, err := o.dial(addr, acct.Username, acct.Password, acct.UseTLS)
+	var proxyConf *imapwrap.ProxyConfig
+	if acct.ProxyHost != "" {
+		proxyConf = &imapwrap.ProxyConfig{
+			Host:     acct.ProxyHost,
+			Port:     acct.ProxyPort,
+			Username: acct.ProxyUsername,
+			Password: acct.ProxyPassword,
+		}
+	}
+	client, err := o.dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
 	if err != nil {
 		return nil, fmt.Errorf("connecting: %w", err)
 	}
@@ -163,11 +172,11 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 
 			// Made progress — reconnect and retry.
 			_ = client.Close()
-			newClient, dialErr := o.dial(addr, acct.Username, acct.Password, acct.UseTLS)
+			newClient, dialErr := o.dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
 			if dialErr != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("folder %q reconnect: %w", folder.Name, dialErr))
 				// Try once more so subsequent folders aren't stuck with a dead client.
-				if c, err := o.dial(addr, acct.Username, acct.Password, acct.UseTLS); err == nil {
+				if c, err := o.dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf); err == nil {
 					client = c
 				}
 				break

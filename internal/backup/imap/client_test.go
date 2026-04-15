@@ -11,7 +11,7 @@ func TestFetchEnvelopes(t *testing.T) {
 	srv.AddFolder(t, "INBOX", 1)
 	srv.SeedMessages(t, "INBOX", 3)
 
-	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestFetchBody(t *testing.T) {
 	raw := []byte("From: test@example.com\r\nTo: rcpt@example.com\r\nSubject: body test\r\nMessage-ID: <bodytest@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nHello, world!\r\n")
 	srv.AppendMessage(t, "INBOX", raw)
 
-	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestFetchEnvelopes_RFC2047Subject(t *testing.T) {
 	raw := []byte("From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: =?GB2312?B?xOO6w6Oh?=\r\nMessage-ID: <rfc2047@test>\r\nDate: Mon, 01 Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody\r\n")
 	srv.AppendMessage(t, "INBOX", raw)
 
-	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestFetchEnvelopes_RFC2047Subject(t *testing.T) {
 func TestSelectFolder_Nonexistent(t *testing.T) {
 	srv := testimap.New(t)
 
-	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestListFolders(t *testing.T) {
 	srv.AddFolder(t, "INBOX", 1)
 	srv.AddFolder(t, "Archive", 1)
 
-	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestFetchBodies(t *testing.T) {
 	srv.AddFolder(t, "INBOX", 1)
 	srv.SeedMessages(t, "INBOX", 5)
 
-	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestFetchBodies_PartialMissing(t *testing.T) {
 	srv.AddFolder(t, "INBOX", 1)
 	srv.SeedMessages(t, "INBOX", 3)
 
-	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestSelectFolder_UIDValidity(t *testing.T) {
 	srv := testimap.New(t)
 	srv.AddFolder(t, "INBOX", 1)
 
-	c, err := Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

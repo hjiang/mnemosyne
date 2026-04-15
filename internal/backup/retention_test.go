@@ -13,7 +13,7 @@ var retentionNow = time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 
 func connectTestIMAP(t *testing.T, srv *testimap.Server) *imapwrap.Client {
 	t.Helper()
-	c, err := imapwrap.Dial(srv.Addr, srv.Username, srv.Password, false)
+	c, err := imapwrap.Dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

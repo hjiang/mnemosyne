@@ -44,6 +44,23 @@
                     <input type="checkbox" name="use_tls" checked> Use TLS
                 </label>
             </div>
+            <details>
+                <summary>SOCKS5 Proxy (optional)</summary>
+                <div class="form-grid">
+                    <label>Proxy Host
+                        <input type="text" name="proxy_host" placeholder="127.0.0.1">
+                    </label>
+                    <label>Proxy Port
+                        <input type="number" name="proxy_port" placeholder="1080">
+                    </label>
+                    <label>Proxy Username
+                        <input type="text" name="proxy_username" placeholder="(optional)">
+                    </label>
+                    <label>Proxy Password
+                        <input type="password" name="proxy_password" placeholder="(optional)">
+                    </label>
+                </div>
+            </details>
             <button type="submit">Add account</button>
         </form>
     </div>
