@@ -4,7 +4,7 @@ A self-hosted web application that pulls emails from IMAP servers and makes them
 
 ## Features
 
-- **IMAP backup** — Connect any number of IMAP accounts, select folders to back up, and sync on a schedule or manually. Messages are stored exactly once via content-addressed dedup (SHA-256).
+- **IMAP backup** — Connect any number of IMAP accounts, select folders to back up, and sync on a schedule or manually. Messages are stored exactly once via content-addressed dedup (SHA-256). Optional per-account SOCKS5 proxy for accounts that aren't reachable directly.
 - **Full-text search** — Gmail-style query syntax: `from:alice subject:"quarterly report" budget has:attachment before:2026-01-01`. Powered by SQLite FTS5.
 - **Attachment text extraction** — PDF (via pdftotext), DOCX, HTML, and plain text attachments are indexed so you can search their contents.
 - **Retention policies** — Keep all messages on the server, keep the N newest, or keep messages younger than N days. Messages are only deleted from the upstream server after the local backup is confirmed durable.
@@ -86,8 +86,11 @@ Enter a password when prompted. You can create multiple users.
    - **Username**: your email address
    - **Password**: your email password (or app-specific password for Gmail)
    - **Use TLS**: check for port 993
+   - **SOCKS5 Proxy** (optional): host, port, and optional credentials for accounts that need to be reached through a proxy (e.g., region-locked providers, jump hosts). Leave blank for a direct connection.
 4. Click **Manage folders** to select which folders to back up.
 5. Click **Backup now** to run the first sync.
+
+You can later use **Edit** on the Accounts page to update any of these fields (password and proxy password are kept unchanged when their inputs are left blank).
 
 ### 4. Optional: reverse proxy with HTTPS
 

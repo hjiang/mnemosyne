@@ -17,15 +17,15 @@ go run ./cmd/mnemosyne adduser <email>   # create a user interactively
 ```
 cmd/mnemosyne/          CLI entrypoint (serve, adduser)
 internal/
-  accounts/             IMAP account + folder CRUD, AES-GCM password encryption
+  accounts/             IMAP account + folder CRUD, AES-GCM password encryption (incl. optional SOCKS5 proxy creds)
   auth/                 bcrypt passwords, sessions, RequireAuth middleware
-  backup/               orchestrator pipeline, retention executor
-    imap/               thin go-imap v2 client wrapper
+  backup/               orchestrator pipeline (with reconnect/retry), retention executor
+    imap/               thin go-imap v2 client wrapper (TLS + SOCKS5 proxy support)
     policy/             retention policies (all, newest_n, younger_than)
   blobs/                content-addressed filesystem blob store (sha256)
   config/               YAML + env config with validation
   db/                   SQLite open/migrate with WAL+FK, embedded migrations
-    migrations/         0001_init, 0002_imap, 0003_fts, 0004_jobs
+    migrations/         0001_init, 0002_imap, 0003_fts, 0004_jobs, 0005_job_progress, 0006_proxy
   export/               mbox, maildir (tar), IMAP upload writers + selection iterator
   extract/              text extraction: txt, html, pdf (pdftotext), docx (zip+xml)
   httpserver/           chi router, HTMX templates, handlers
@@ -119,3 +119,5 @@ Add new migrations as `internal/db/migrations/NNNN_name.sql`. They are embedded 
 - **`BODY.PEEK[]`** for IMAP fetch: never sets `\Seen` flag on the upstream server
 - **Retention policies as pure functions**: `(messages, now) -> UIDs to expunge`, fully testable without IMAP
 - **backupOK guard**: retention never deletes upstream messages unless the backup confirms all blobs are durable
+- **Retry while making progress**: the orchestrator reconnects and retries `syncFolder` on connection-level failures (signaled via the `connError` sentinel) as long as either `NewLocations` or `NewEnvelopes` advanced during the attempt. Stopping when no progress is made avoids tight loops on persistent server errors. Envelopes already fetched are carried across retries (the in/out `envelopes` slice on `syncFolder`) so we don't refetch them.
+- **SOCKS5 per account**: each `imap_accounts` row carries optional `proxy_host/port/username/password_enc` columns (migration `0006_proxy`). Empty `proxy_host` means direct connection. The proxy password is encrypted with the same `KeyManager` used for the IMAP password.
