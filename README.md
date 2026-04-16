@@ -86,7 +86,7 @@ Enter a password when prompted. You can create multiple users.
    - **Username**: your email address
    - **Password**: your email password (or app-specific password for Gmail)
    - **Use TLS**: check for port 993
-   - **SOCKS5 Proxy** (optional): host, port, and optional credentials for accounts that need to be reached through a proxy (e.g., region-locked providers, jump hosts). Leave blank for a direct connection.
+   - **SOCKS5 Proxy** (optional): for accounts that need to be reached through a proxy (e.g., region-locked providers, jump hosts), either leave all proxy fields blank for a direct connection, or provide both proxy host and proxy port. Proxy credentials are optional. A typical SOCKS5 port is `1080`.
 4. Click **Manage folders** to select which folders to back up.
 5. Click **Backup now** to run the first sync.
 
