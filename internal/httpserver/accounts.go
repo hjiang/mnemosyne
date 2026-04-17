@@ -254,7 +254,7 @@ func (s *Server) accountUpdate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/accounts", http.StatusSeeOther)
 }
 
-// requireAccount parses the ":id" URL param and verifies ownership.
+// requireAccount parses the "id" URL param and verifies ownership.
 // On failure it writes 404 and returns ok=false.
 func (s *Server) requireAccount(w http.ResponseWriter, r *http.Request) (*accounts.Account, int64, bool) {
 	userID := auth.UserIDFromContext(r.Context())
@@ -298,8 +298,8 @@ func parseAccountForm(r *http.Request) (*accountFormInput, string) {
 		return nil, "Invalid port."
 	}
 	in.Port = port
-	if s := r.FormValue("proxy_port"); s != "" {
-		p, err := strconv.Atoi(s)
+	if proxyPortStr := r.FormValue("proxy_port"); proxyPortStr != "" {
+		p, err := strconv.Atoi(proxyPortStr)
 		if err != nil {
 			return nil, "Invalid proxy port."
 		}
