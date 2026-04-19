@@ -46,11 +46,15 @@ func NewTokenManager(cfg config.OAuthConfig, baseURL string, acctRepo *accounts.
 			ClientSecret: cfg.Google.ClientSecret,
 			Endpoint:     google.Endpoint,
 			RedirectURL:  baseURL + "/oauth/google/callback",
-			Scopes:       []string{gmailIMAPScope, "email"},
+			Scopes:       []string{gmailIMAPScope, "openid", "email"},
 		}
 	}
 	return tm
 }
+
+// maxPendingStates caps the number of in-flight OAuth states to prevent
+// unbounded memory growth from abandoned authorization flows.
+const maxPendingStates = 100
 
 // AuthCodeURL generates an authorization URL and a random state parameter.
 // The state is stored in memory and expires after 10 minutes.
@@ -66,6 +70,7 @@ func (tm *TokenManager) AuthCodeURL(userID int64) (string, string, error) {
 	state := hex.EncodeToString(b)
 
 	tm.mu.Lock()
+	tm.pruneExpiredStatesLocked()
 	tm.states[state] = stateEntry{
 		userID:    userID,
 		expiresAt: time.Now().Add(10 * time.Minute),
@@ -96,6 +101,29 @@ func (tm *TokenManager) ValidateState(state string) (int64, bool) {
 	return entry.userID, true
 }
 
+// pruneExpiredStatesLocked removes expired entries from the state map.
+// Caller must hold tm.mu.
+func (tm *TokenManager) pruneExpiredStatesLocked() {
+	now := time.Now()
+	for k, v := range tm.states {
+		if now.After(v.expiresAt) {
+			delete(tm.states, k)
+		}
+	}
+	// Hard cap: if still too many, drop oldest.
+	for len(tm.states) >= maxPendingStates {
+		var oldest string
+		var oldestTime time.Time
+		for k, v := range tm.states {
+			if oldest == "" || v.expiresAt.Before(oldestTime) {
+				oldest = k
+				oldestTime = v.expiresAt
+			}
+		}
+		delete(tm.states, oldest)
+	}
+}
+
 // Exchange trades an authorization code for OAuth2 tokens.
 func (tm *TokenManager) Exchange(ctx context.Context, code string) (*oauth2.Token, error) {
 	if tm.googleCfg == nil {
@@ -117,6 +145,9 @@ func (tm *TokenManager) EnsureFreshToken(ctx context.Context, accountID, userID 
 	}
 	if !acct.IsOAuth() {
 		return "", fmt.Errorf("account %d is not an OAuth account", accountID)
+	}
+	if acct.RefreshToken == "" {
+		return "", fmt.Errorf("account %d has no refresh token; reconnect the Google account", accountID)
 	}
 
 	// If the access token is still fresh, return it.

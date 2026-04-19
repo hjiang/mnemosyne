@@ -1,12 +1,11 @@
 package httpserver
 
 import (
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/hjiang/mnemosyne/internal/auth"
 )
@@ -30,7 +29,7 @@ func (s *Server) oauthGoogleStart(w http.ResponseWriter, r *http.Request) {
 
 // oauthGoogleCallback handles the redirect from Google after authorization.
 func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
-	if s.tokenMgr == nil {
+	if s.tokenMgr == nil || s.accounts == nil {
 		http.Error(w, "Google OAuth not configured", http.StatusNotFound)
 		return
 	}
@@ -64,10 +63,19 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract email from the ID token.
-	email, err := extractEmailFromIDToken(tok)
+	if tok.RefreshToken == "" {
+		log.Print("oauth: no refresh token returned; user may need to revoke and re-authorize")
+		s.render(w, r, "accounts.html", map[string]any{
+			"Title": "Accounts",
+			"Error": "Google did not return a refresh token. Please revoke Mnemosyne's access in your Google Account permissions and try again.",
+		})
+		return
+	}
+
+	// Fetch the user's email from Google's userinfo endpoint.
+	email, err := fetchGoogleEmail(r.Context(), tok.AccessToken)
 	if err != nil {
-		log.Printf("oauth extract email: %v", err)
+		log.Printf("oauth fetch email: %v", err)
 		s.render(w, r, "accounts.html", map[string]any{
 			"Title": "Accounts",
 			"Error": "Failed to determine account email.",
@@ -96,34 +104,35 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }
 
-// extractEmailFromIDToken pulls the email from the id_token extra field
-// that Google returns alongside the access token.
-func extractEmailFromIDToken(tok interface{ Extra(string) interface{} }) (string, error) {
-	idToken, ok := tok.Extra("id_token").(string)
-	if !ok || idToken == "" {
-		return "", fmt.Errorf("no id_token in response")
-	}
-
-	// The ID token is a JWT: header.payload.signature (base64url-encoded).
-	// We only need the payload to extract the email claim.
-	parts := strings.SplitN(idToken, ".", 3)
-	if len(parts) != 3 {
-		return "", fmt.Errorf("malformed id_token")
-	}
-
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+// fetchGoogleEmail calls Google's userinfo endpoint to get the authenticated
+// user's email address. This is more robust than parsing the id_token JWT
+// because the endpoint validates the access token server-side.
+func fetchGoogleEmail(ctx context.Context, accessToken string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/oauth2/v3/userinfo", nil)
 	if err != nil {
-		return "", fmt.Errorf("decoding id_token payload: %w", err)
+		return "", fmt.Errorf("creating userinfo request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching userinfo: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("userinfo returned status %d", resp.StatusCode)
 	}
 
-	var claims struct {
-		Email string `json:"email"`
+	var info struct {
+		Email         string `json:"email"`
+		EmailVerified bool   `json:"email_verified"`
 	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return "", fmt.Errorf("parsing id_token claims: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", fmt.Errorf("decoding userinfo: %w", err)
 	}
-	if claims.Email == "" {
-		return "", fmt.Errorf("no email claim in id_token")
+	if info.Email == "" {
+		return "", fmt.Errorf("no email in userinfo response")
 	}
-	return claims.Email, nil
+	return info.Email, nil
 }
