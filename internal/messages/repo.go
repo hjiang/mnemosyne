@@ -411,17 +411,6 @@ func (r *Repo) ReindexFTS(hash []byte, subject, fromAddr, toAddrs, ccAddrs, body
 	return r.IndexFTS(rowid, subject, fromAddr, toAddrs, ccAddrs, bodyText)
 }
 
-// UpdateAttachmentText marks an attachment as text-extracted and updates its content.
-func (r *Repo) UpdateAttachmentText(attID int64, _ string, status int) error {
-	_, err := r.db.Exec(
-		"UPDATE attachments SET text_extracted = ? WHERE id = ?",
-		status, attID)
-	if err != nil {
-		return fmt.Errorf("updating attachment text: %w", err)
-	}
-	return nil
-}
-
 // UpdateBodyText updates the body_text field of a message.
 func (r *Repo) UpdateBodyText(hash []byte, bodyText string) error {
 	_, err := r.db.Exec("UPDATE messages SET body_text = ? WHERE hash = ?", bodyText, hash)

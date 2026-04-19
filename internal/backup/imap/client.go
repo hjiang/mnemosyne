@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net"
 	"sort"
+	"strings"
 	"time"
 
 	goiap "github.com/emersion/go-imap/v2"
@@ -316,17 +317,6 @@ func formatAddrs(addrs []goiap.Address) string {
 			result = append(result, addr)
 		}
 	}
-	return joinAddrs(result)
-}
-
-func joinAddrs(addrs []string) string {
-	if len(addrs) == 0 {
-		return ""
-	}
-	out := addrs[0]
-	for _, a := range addrs[1:] {
-		out += ", " + a
-	}
-	return out
+	return strings.Join(result, ", ")
 }
 
