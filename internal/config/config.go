@@ -16,12 +16,31 @@ type Config struct {
 	BaseURL    string        `yaml:"base_url"`
 	SessionTTL time.Duration `yaml:"session_ttl"`
 	Backup     BackupConfig  `yaml:"backup"`
+	OAuth      OAuthConfig   `yaml:"oauth"`
 }
 
 // BackupConfig holds backup-related settings.
 type BackupConfig struct {
 	DefaultSchedule string `yaml:"default_schedule"`
 	MaxConcurrent   int    `yaml:"max_concurrent"`
+}
+
+// OAuthConfig holds OAuth provider configurations.
+type OAuthConfig struct {
+	Google *OAuthProviderConfig `yaml:"google"`
+}
+
+// OAuthProviderConfig holds credentials for an OAuth provider.
+type OAuthProviderConfig struct {
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+}
+
+// OAuthGoogleEnabled returns true when Google OAuth is fully configured.
+func (c Config) OAuthGoogleEnabled() bool {
+	return c.OAuth.Google != nil &&
+		c.OAuth.Google.ClientID != "" &&
+		c.OAuth.Google.ClientSecret != ""
 }
 
 // Defaults returns a Config populated with default values.
@@ -71,6 +90,18 @@ func ApplyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MNEMOSYNE_BASE_URL"); v != "" {
 		cfg.BaseURL = v
+	}
+	if v := os.Getenv("MNEMOSYNE_OAUTH_GOOGLE_CLIENT_ID"); v != "" {
+		if cfg.OAuth.Google == nil {
+			cfg.OAuth.Google = &OAuthProviderConfig{}
+		}
+		cfg.OAuth.Google.ClientID = v
+	}
+	if v := os.Getenv("MNEMOSYNE_OAUTH_GOOGLE_CLIENT_SECRET"); v != "" {
+		if cfg.OAuth.Google == nil {
+			cfg.OAuth.Google = &OAuthProviderConfig{}
+		}
+		cfg.OAuth.Google.ClientSecret = v
 	}
 }
 

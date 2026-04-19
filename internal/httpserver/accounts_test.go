@@ -55,11 +55,11 @@ func newAcctTestEnv(t *testing.T) *acctTestEnv {
 	acctRepo := accounts.NewRepo(database, km)
 	msgRepo := messages.NewRepo(database)
 	store := blobs.NewStore(filepath.Join(dir, "blobs"))
-	orch := backup.NewOrchestrator(acctRepo, msgRepo, store)
+	orch := backup.NewOrchestrator(acctRepo, msgRepo, store, nil)
 
 	searchExec := search.NewExecutor(database)
 	jobQueue := jobs.NewQueue(database, clock.Now)
-	srv := New(userRepo, sessions, acctRepo, orch, jobQueue, msgRepo, searchExec, store)
+	srv := New(userRepo, sessions, acctRepo, orch, jobQueue, msgRepo, searchExec, store, nil)
 
 	hashA, _ := auth.HashPassword("pass")
 	uA, _ := userRepo.Create("a@test.com", hashA)

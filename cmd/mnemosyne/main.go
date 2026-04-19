@@ -26,6 +26,7 @@ import (
 	"github.com/hjiang/mnemosyne/internal/httpserver"
 	"github.com/hjiang/mnemosyne/internal/jobs"
 	"github.com/hjiang/mnemosyne/internal/messages"
+	"github.com/hjiang/mnemosyne/internal/oauth"
 	"github.com/hjiang/mnemosyne/internal/scheduler"
 	"github.com/hjiang/mnemosyne/internal/search"
 	"github.com/hjiang/mnemosyne/internal/users"
@@ -104,7 +105,13 @@ func runServe() error {
 	acctRepo := accounts.NewRepo(database, km)
 	msgRepo := messages.NewRepo(database)
 	blobStore := blobs.NewStore(filepath.Join(cfg.DataDir, "blobs"))
-	orch := backup.NewOrchestrator(acctRepo, msgRepo, blobStore)
+	var tokenMgr *oauth.TokenManager
+	if cfg.OAuthGoogleEnabled() {
+		tokenMgr = oauth.NewTokenManager(cfg.OAuth, cfg.BaseURL, acctRepo)
+		log.Print("Google OAuth enabled")
+	}
+
+	orch := backup.NewOrchestrator(acctRepo, msgRepo, blobStore, tokenMgr)
 	searchExec := search.NewExecutor(database)
 
 	// Job queue and worker pool for async backup jobs.
@@ -128,7 +135,7 @@ func runServe() error {
 		defer sched.Stop()
 	}
 
-	srv := httpserver.New(userRepo, sessions, acctRepo, orch, jobQueue, msgRepo, searchExec, blobStore)
+	srv := httpserver.New(userRepo, sessions, acctRepo, orch, jobQueue, msgRepo, searchExec, blobStore, tokenMgr)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,

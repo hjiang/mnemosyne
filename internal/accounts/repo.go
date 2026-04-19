@@ -14,21 +14,30 @@ var (
 
 // Account represents an IMAP account.
 type Account struct {
-	ID         int64
-	UserID     int64
-	Label      string
-	Host       string
-	Port       int
-	Username   string
-	Password   string // decrypted
-	UseTLS     bool
-	LastSyncAt *int64
+	ID           int64
+	UserID       int64
+	Label        string
+	Host         string
+	Port         int
+	Username     string
+	Password     string // decrypted
+	UseTLS       bool
+	LastSyncAt   *int64
+	AuthType     string // "password" or "oauth_google"
+	RefreshToken string // decrypted; empty for password accounts
+	AccessToken  string // decrypted; empty for password accounts
+	TokenExpiry  *int64 // unix timestamp; nil for password accounts
 
 	// Optional SOCKS5 proxy. Empty ProxyHost means no proxy.
 	ProxyHost     string
 	ProxyPort     int
 	ProxyUsername string
 	ProxyPassword string // decrypted
+}
+
+// IsOAuth returns true if the account uses OAuth authentication.
+func (a *Account) IsOAuth() bool {
+	return a.AuthType != "" && a.AuthType != "password"
 }
 
 // Folder represents an IMAP folder within an account.
@@ -95,13 +104,16 @@ func (r *Repo) GetByID(id, userID int64) (*Account, error) {
 	var a Account
 	var encPwd, proxyPwdEnc []byte
 	var tls int
+	var encRefresh, encAccess []byte
 	err := r.db.QueryRow(
 		`SELECT id, user_id, label, host, port, username, password_enc, use_tls, last_sync_at,
-		        proxy_host, proxy_port, proxy_username, proxy_password_enc
+		        proxy_host, proxy_port, proxy_username, proxy_password_enc,
+		        auth_type, refresh_token_enc, access_token_enc, token_expiry
 		 FROM imap_accounts WHERE id = ? AND user_id = ?`,
 		id, userID,
 	).Scan(&a.ID, &a.UserID, &a.Label, &a.Host, &a.Port, &a.Username, &encPwd, &tls, &a.LastSyncAt,
-		&a.ProxyHost, &a.ProxyPort, &a.ProxyUsername, &proxyPwdEnc)
+		&a.ProxyHost, &a.ProxyPort, &a.ProxyUsername, &proxyPwdEnc,
+		&a.AuthType, &encRefresh, &encAccess, &a.TokenExpiry)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -123,6 +135,9 @@ func (r *Repo) GetByID(id, userID int64) (*Account, error) {
 		}
 		a.ProxyPassword = string(proxyPwd)
 	}
+	if err := r.decryptTokens(&a, encRefresh, encAccess); err != nil {
+		return nil, err
+	}
 	return &a, nil
 }
 
@@ -131,7 +146,8 @@ func (r *Repo) GetByID(id, userID int64) (*Account, error) {
 func (r *Repo) List(userID int64) ([]*Account, error) {
 	rows, err := r.db.Query(
 		`SELECT id, user_id, label, host, port, username, password_enc, use_tls, last_sync_at,
-		        proxy_host, proxy_port, proxy_username, proxy_password_enc
+		        proxy_host, proxy_port, proxy_username, proxy_password_enc,
+		        auth_type, refresh_token_enc, access_token_enc, token_expiry
 		 FROM imap_accounts WHERE user_id = ?`,
 		userID,
 	)
@@ -145,8 +161,10 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 		var a Account
 		var encPwd, proxyPwdEnc []byte
 		var tls int
+		var encRefresh, encAccess []byte
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Label, &a.Host, &a.Port, &a.Username, &encPwd, &tls, &a.LastSyncAt,
-			&a.ProxyHost, &a.ProxyPort, &a.ProxyUsername, &proxyPwdEnc); err != nil {
+			&a.ProxyHost, &a.ProxyPort, &a.ProxyUsername, &proxyPwdEnc,
+			&a.AuthType, &encRefresh, &encAccess, &a.TokenExpiry); err != nil {
 			return nil, fmt.Errorf("scanning account: %w", err)
 		}
 		pwd, err := r.km.Decrypt(encPwd)
@@ -162,9 +180,89 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 			}
 			a.ProxyPassword = string(proxyPwd)
 		}
+		if err := r.decryptTokens(&a, encRefresh, encAccess); err != nil {
+			return nil, err
+		}
 		accounts = append(accounts, &a)
 	}
 	return accounts, rows.Err()
+}
+
+// CreateOAuth inserts an OAuth-authenticated IMAP account.
+// Host, port, and TLS are set to Google IMAP defaults.
+// enforces user isolation
+func (r *Repo) CreateOAuth(userID int64, label, username, authType, refreshToken, accessToken string, tokenExpiry int64) (*Account, error) {
+	encPwd, err := r.km.Encrypt([]byte(""))
+	if err != nil {
+		return nil, fmt.Errorf("encrypting empty password: %w", err)
+	}
+	encRefresh, err := r.km.Encrypt([]byte(refreshToken))
+	if err != nil {
+		return nil, fmt.Errorf("encrypting refresh token: %w", err)
+	}
+	encAccess, err := r.km.Encrypt([]byte(accessToken))
+	if err != nil {
+		return nil, fmt.Errorf("encrypting access token: %w", err)
+	}
+
+	res, err := r.db.Exec(
+		`INSERT INTO imap_accounts (user_id, label, host, port, username, password_enc, use_tls,
+		                            auth_type, refresh_token_enc, access_token_enc, token_expiry)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userID, label, "imap.gmail.com", 993, username, encPwd, 1,
+		authType, encRefresh, encAccess, tokenExpiry,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("inserting oauth account: %w", err)
+	}
+
+	id, _ := res.LastInsertId()
+	exp := tokenExpiry
+	return &Account{
+		ID: id, UserID: userID, Label: label,
+		Host: "imap.gmail.com", Port: 993, Username: username,
+		UseTLS: true, AuthType: authType,
+		RefreshToken: refreshToken, AccessToken: accessToken,
+		TokenExpiry: &exp,
+	}, nil
+}
+
+// UpdateTokens updates the encrypted OAuth tokens for an account.
+func (r *Repo) UpdateTokens(accountID int64, accessToken, refreshToken string, expiry int64) error {
+	encAccess, err := r.km.Encrypt([]byte(accessToken))
+	if err != nil {
+		return fmt.Errorf("encrypting access token: %w", err)
+	}
+	encRefresh, err := r.km.Encrypt([]byte(refreshToken))
+	if err != nil {
+		return fmt.Errorf("encrypting refresh token: %w", err)
+	}
+	_, err = r.db.Exec(
+		`UPDATE imap_accounts SET access_token_enc = ?, refresh_token_enc = ?, token_expiry = ? WHERE id = ?`,
+		encAccess, encRefresh, expiry, accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("updating tokens: %w", err)
+	}
+	return nil
+}
+
+func (r *Repo) decryptTokens(a *Account, encRefresh, encAccess []byte) error {
+	if len(encRefresh) > 0 {
+		tok, err := r.km.Decrypt(encRefresh)
+		if err != nil {
+			return fmt.Errorf("decrypting refresh token: %w", err)
+		}
+		a.RefreshToken = string(tok)
+	}
+	if len(encAccess) > 0 {
+		tok, err := r.km.Decrypt(encAccess)
+		if err != nil {
+			return fmt.Errorf("decrypting access token: %w", err)
+		}
+		a.AccessToken = string(tok)
+	}
+	return nil
 }
 
 // CreateFolder inserts a folder for the given account.

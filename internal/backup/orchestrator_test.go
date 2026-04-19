@@ -137,7 +137,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	orch := NewOrchestrator(acctRepo, msgRepo, store)
+	orch := NewOrchestrator(acctRepo, msgRepo, store, nil)
 
 	return &testEnv{
 		orchestrator: orch,
@@ -390,7 +390,7 @@ func TestOrchestrator_UserIsolation(t *testing.T) {
 	acctRepo := accounts.NewRepo(database, km)
 	msgRepo := messages.NewRepo(database)
 	store := blobs.NewStore(filepath.Join(dir, "blobs"))
-	orch := NewOrchestrator(acctRepo, msgRepo, store)
+	orch := NewOrchestrator(acctRepo, msgRepo, store, nil)
 
 	// User A's server and account (unique messages for user A).
 	srvA := testimap.New(t)

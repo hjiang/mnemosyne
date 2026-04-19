@@ -115,6 +115,60 @@ backup:
 	}
 }
 
+func TestLoad_OAuthFields(t *testing.T) {
+	path := writeConfig(t, `
+oauth:
+  google:
+    client_id: "test-client-id"
+    client_secret: "test-client-secret"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.OAuthGoogleEnabled() {
+		t.Fatal("expected OAuthGoogleEnabled to be true")
+	}
+	if cfg.OAuth.Google.ClientID != "test-client-id" {
+		t.Errorf("ClientID = %q, want %q", cfg.OAuth.Google.ClientID, "test-client-id")
+	}
+	if cfg.OAuth.Google.ClientSecret != "test-client-secret" {
+		t.Errorf("ClientSecret = %q, want %q", cfg.OAuth.Google.ClientSecret, "test-client-secret")
+	}
+}
+
+func TestOAuthGoogleEnabled_Disabled(t *testing.T) {
+	cfg := Defaults()
+	if cfg.OAuthGoogleEnabled() {
+		t.Error("expected OAuthGoogleEnabled to be false with defaults")
+	}
+
+	cfg.OAuth.Google = &OAuthProviderConfig{ClientID: "id-only"}
+	if cfg.OAuthGoogleEnabled() {
+		t.Error("expected OAuthGoogleEnabled to be false with only client_id")
+	}
+}
+
+func TestLoad_OAuthEnvOverrides(t *testing.T) {
+	path := writeConfig(t, "{}")
+	t.Setenv("MNEMOSYNE_OAUTH_GOOGLE_CLIENT_ID", "env-id")
+	t.Setenv("MNEMOSYNE_OAUTH_GOOGLE_CLIENT_SECRET", "env-secret")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.OAuthGoogleEnabled() {
+		t.Fatal("expected OAuthGoogleEnabled to be true from env")
+	}
+	if cfg.OAuth.Google.ClientID != "env-id" {
+		t.Errorf("ClientID = %q, want %q", cfg.OAuth.Google.ClientID, "env-id")
+	}
+	if cfg.OAuth.Google.ClientSecret != "env-secret" {
+		t.Errorf("ClientSecret = %q, want %q", cfg.OAuth.Google.ClientSecret, "env-secret")
+	}
+}
+
 func TestLoad_NonexistentFile(t *testing.T) {
 	_, err := Load("/nonexistent/config.yaml")
 	if err == nil {

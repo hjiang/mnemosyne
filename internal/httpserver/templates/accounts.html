@@ -10,6 +10,7 @@
     <article class="card">
         <header>
             <strong>{{.Label}}</strong>
+            {{if .IsOAuth}}<small>(OAuth)</small>{{end}}
         </header>
         <span class="account-meta"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>{{.Host}}:{{.Port}}</span>
         <div class="account-actions">
@@ -22,8 +23,16 @@
     </article>
     {{end}}
 
+    {{if .OAuthGoogleEnabled}}
     <div class="form-section">
-        <h3>Add account</h3>
+        <h3>Connect with OAuth</h3>
+        <p>Link your Google account for IMAP backup without an app password.</p>
+        <a href="/oauth/google/start" role="button">Connect with Google</a>
+    </div>
+    {{end}}
+
+    <div class="form-section">
+        <h3>Add account{{if .OAuthGoogleEnabled}} (password){{end}}</h3>
         <form method="POST" action="/accounts">
             <div class="form-grid">
                 <label class="full-width">Label

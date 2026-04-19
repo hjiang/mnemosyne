@@ -17,20 +17,21 @@ go run ./cmd/mnemosyne adduser <email>   # create a user interactively
 ```
 cmd/mnemosyne/          CLI entrypoint (serve, adduser)
 internal/
-  accounts/             IMAP account + folder CRUD, AES-GCM password encryption (incl. optional SOCKS5 proxy creds)
+  accounts/             IMAP account + folder CRUD, AES-GCM password/token encryption (incl. optional SOCKS5 proxy creds)
   auth/                 bcrypt passwords, sessions, RequireAuth middleware
   backup/               orchestrator pipeline (with reconnect/retry), retention executor
-    imap/               thin go-imap v2 client wrapper (TLS + SOCKS5 proxy support)
+    imap/               thin go-imap v2 client wrapper (LOGIN + OAUTHBEARER, TLS + SOCKS5 proxy support)
     policy/             retention policies (all, newest_n, younger_than)
   blobs/                content-addressed filesystem blob store (sha256)
   config/               YAML + env config with validation
   db/                   SQLite open/migrate with WAL+FK, embedded migrations
-    migrations/         0001_init, 0002_imap, 0003_fts, 0004_jobs, 0005_job_progress, 0006_proxy
+    migrations/         0001_init, 0002_imap, 0003_fts, 0004_jobs, 0005_job_progress, 0006_proxy, 0007_oauth
   export/               mbox, maildir (tar), IMAP upload writers + selection iterator
   extract/              text extraction: txt, html, pdf (pdftotext), docx (zip+xml)
   httpserver/           chi router, HTMX templates, handlers
   jobs/                 persistent job queue + worker pool with panic recovery
   messages/             messages, locations, attachments repos + FTS5 indexing
+  oauth/                OAuth2 token manager (auth URL, code exchange, token refresh)
   scheduler/            cron-based backup scheduling (robfig/cron/v3)
   search/               Gmail-style query parser + FTS5/SQL executor
   testimap/             in-memory IMAP test server (wraps imapmemserver)
@@ -41,7 +42,8 @@ internal/
 
 - **Go 1.26.1**, module `github.com/hjiang/mnemosyne`
 - **SQLite** via `modernc.org/sqlite` (pure Go, no CGo) with WAL mode + foreign keys
-- **go-imap v2** (`github.com/emersion/go-imap/v2`) for IMAP operations
+- **go-imap v2** (`github.com/emersion/go-imap/v2`) for IMAP operations (LOGIN + OAUTHBEARER via go-sasl)
+- **golang.org/x/oauth2** for OAuth2 token lifecycle (Google Workspace IMAP)
 - **chi v5** for HTTP routing, HTMX + server-rendered templates for UI
 - **FTS5** contentless virtual table for full-text search
 - **Nix flake** for reproducible dev environment (`nix develop`)
@@ -107,9 +109,21 @@ srv.AppendMessage(t, "INBOX", rawBytes)  // seed specific message
 
 Config file at `MNEMOSYNE_CONFIG` (default `/etc/mnemosyne/config.yaml`). Falls back to defaults with env overrides: `MNEMOSYNE_LISTEN`, `MNEMOSYNE_DATA_DIR`, `MNEMOSYNE_BASE_URL`.
 
+Google OAuth is configured via `oauth.google.client_id` / `oauth.google.client_secret` in the YAML config, or env vars `MNEMOSYNE_OAUTH_GOOGLE_CLIENT_ID` / `MNEMOSYNE_OAUTH_GOOGLE_CLIENT_SECRET`. When configured, accounts can authenticate via OAUTHBEARER instead of plain passwords — useful for Google Workspace orgs that disable app passwords.
+
 ### Migrations
 
 Add new migrations as `internal/db/migrations/NNNN_name.sql`. They are embedded via `embed.FS` and applied in order on startup. Migrations are forward-only (no down migrations).
+
+### OAuth2 (Google Workspace)
+
+Accounts use one of two auth types: `password` (plain IMAP LOGIN) or `oauth_google` (OAUTHBEARER SASL). The `auth_type` column in `imap_accounts` determines which path the orchestrator takes.
+
+OAuth tokens (refresh + access) are encrypted at rest with the same AES-256-GCM key used for passwords. The `TokenManager` (`internal/oauth`) handles the authorization code flow (browser redirect) and background token refresh. The orchestrator calls `EnsureFreshToken` before each IMAP dial; if the access token is within 5 minutes of expiry, it refreshes automatically.
+
+The OAuth callback extracts the user's email from the JWT `id_token` returned by Google — no external JWT library is needed since the token was just received over TLS from Google's token endpoint.
+
+OAuth state parameters are stored in-memory with a 10-minute expiry. This is appropriate for a single-instance self-hosted app.
 
 ## Architecture Decisions
 
@@ -121,3 +135,4 @@ Add new migrations as `internal/db/migrations/NNNN_name.sql`. They are embedded 
 - **backupOK guard**: retention never deletes upstream messages unless the backup confirms all blobs are durable
 - **Retry while making progress**: the orchestrator reconnects and retries `syncFolder` on connection-level failures (signaled via the `connError` sentinel) as long as either `NewLocations` or `NewEnvelopes` advanced during the attempt. Stopping when no progress is made avoids tight loops on persistent server errors. Envelopes already fetched are carried across retries (the in/out `envelopes` slice on `syncFolder`) so we don't refetch them.
 - **SOCKS5 per account**: each `imap_accounts` row carries optional `proxy_host`, `proxy_port`, `proxy_username`, and `proxy_password_enc` columns (migration `0006_proxy`). Empty `proxy_host` means direct connection. The proxy password is encrypted with the same `KeyManager` used for the IMAP password.
+- **OAUTHBEARER over XOAUTH2**: OAUTHBEARER (RFC 7628) is the modern standard; go-sasl provides it out of the box. Gmail supports both.
