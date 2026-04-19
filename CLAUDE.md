@@ -121,7 +121,7 @@ Accounts use one of two auth types: `password` (plain IMAP LOGIN) or `oauth_goog
 
 OAuth tokens (refresh + access) are encrypted at rest with the same AES-256-GCM key used for passwords. The `TokenManager` (`internal/oauth`) handles the authorization code flow (browser redirect) and background token refresh. The orchestrator calls `EnsureFreshToken` before each IMAP dial; if the access token is within 5 minutes of expiry, it refreshes automatically.
 
-The OAuth callback extracts the user's email from the JWT `id_token` returned by Google — no external JWT library is needed since the token was just received over TLS from Google's token endpoint.
+After exchanging the authorization code for tokens, the OAuth callback fetches the user's email from Google's userinfo endpoint (via `fetchGoogleEmail`) rather than decoding it from the JWT `id_token`. The endpoint also confirms `email_verified` is true.
 
 OAuth state parameters are stored in-memory with a 10-minute expiry. This is appropriate for a single-instance self-hosted app.
 

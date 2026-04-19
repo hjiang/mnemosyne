@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/hjiang/mnemosyne/internal/auth"
 )
@@ -36,18 +37,22 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Validate state parameter.
 	state := r.URL.Query().Get("state")
-	userID, ok := s.tokenMgr.ValidateState(state)
+	stateUserID, ok := s.tokenMgr.ValidateState(state)
 	if !ok {
 		http.Error(w, "invalid or expired state parameter", http.StatusBadRequest)
 		return
 	}
 
+	// Verify the authenticated user matches the one who started the flow.
+	userID := auth.UserIDFromContext(r.Context())
+	if stateUserID != userID {
+		http.Error(w, "authenticated user does not match OAuth state", http.StatusForbidden)
+		return
+	}
+
 	// Check for errors from Google.
 	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
-		s.render(w, r, "accounts.html", map[string]any{
-			"Title": "Accounts",
-			"Error": fmt.Sprintf("Google authorization failed: %s", errMsg),
-		})
+		s.renderOAuthError(w, r, userID, fmt.Sprintf("Google authorization failed: %s", errMsg))
 		return
 	}
 
@@ -56,19 +61,13 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	tok, err := s.tokenMgr.Exchange(r.Context(), code)
 	if err != nil {
 		log.Printf("oauth token exchange: %v", err)
-		s.render(w, r, "accounts.html", map[string]any{
-			"Title": "Accounts",
-			"Error": "Failed to exchange authorization code.",
-		})
+		s.renderOAuthError(w, r, userID, "Failed to exchange authorization code.")
 		return
 	}
 
 	if tok.RefreshToken == "" {
 		log.Print("oauth: no refresh token returned; user may need to revoke and re-authorize")
-		s.render(w, r, "accounts.html", map[string]any{
-			"Title": "Accounts",
-			"Error": "Google did not return a refresh token. Please revoke Mnemosyne's access in your Google Account permissions and try again.",
-		})
+		s.renderOAuthError(w, r, userID, "Google did not return a refresh token. Please revoke Mnemosyne's access in your Google Account permissions and try again.")
 		return
 	}
 
@@ -76,10 +75,7 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	email, err := fetchGoogleEmail(r.Context(), tok.AccessToken)
 	if err != nil {
 		log.Printf("oauth fetch email: %v", err)
-		s.render(w, r, "accounts.html", map[string]any{
-			"Title": "Accounts",
-			"Error": "Failed to determine account email.",
-		})
+		s.renderOAuthError(w, r, userID, "Failed to determine account email.")
 		return
 	}
 
@@ -91,10 +87,7 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		log.Printf("oauth create account: %v", err)
-		s.render(w, r, "accounts.html", map[string]any{
-			"Title": "Accounts",
-			"Error": "Failed to create account.",
-		})
+		s.renderOAuthError(w, r, userID, "Failed to create account.")
 		return
 	}
 
@@ -104,10 +97,28 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }
 
+// renderOAuthError renders the accounts page with an error message,
+// preserving the full page data (account list, OAuth button state).
+func (s *Server) renderOAuthError(w http.ResponseWriter, r *http.Request, userID int64, errMsg string) {
+	accts, _ := s.accounts.List(userID)
+	s.render(w, r, "accounts.html", map[string]any{
+		"Title":              "Accounts",
+		"Accounts":           accts,
+		"OAuthGoogleEnabled": s.tokenMgr != nil,
+		"Error":              errMsg,
+	})
+}
+
+// userinfoTimeout is the maximum time to wait for Google's userinfo endpoint.
+const userinfoTimeout = 10 * time.Second
+
 // fetchGoogleEmail calls Google's userinfo endpoint to get the authenticated
 // user's email address. This is more robust than parsing the id_token JWT
 // because the endpoint validates the access token server-side.
 func fetchGoogleEmail(ctx context.Context, accessToken string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, userinfoTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/oauth2/v3/userinfo", nil)
 	if err != nil {
 		return "", fmt.Errorf("creating userinfo request: %w", err)
@@ -133,6 +144,9 @@ func fetchGoogleEmail(ctx context.Context, accessToken string) (string, error) {
 	}
 	if info.Email == "" {
 		return "", fmt.Errorf("no email in userinfo response")
+	}
+	if !info.EmailVerified {
+		return "", fmt.Errorf("email in userinfo response is not verified")
 	}
 	return info.Email, nil
 }

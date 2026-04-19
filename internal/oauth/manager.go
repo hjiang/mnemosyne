@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"sync"
 	"time"
 
@@ -41,11 +42,12 @@ func NewTokenManager(cfg config.OAuthConfig, baseURL string, acctRepo *accounts.
 		states:   make(map[string]stateEntry),
 	}
 	if cfg.Google != nil {
+		callbackURL, _ := url.JoinPath(baseURL, "/oauth/google/callback")
 		tm.googleCfg = &oauth2.Config{
 			ClientID:     cfg.Google.ClientID,
 			ClientSecret: cfg.Google.ClientSecret,
 			Endpoint:     google.Endpoint,
-			RedirectURL:  baseURL + "/oauth/google/callback",
+			RedirectURL:  callbackURL,
 			Scopes:       []string{gmailIMAPScope, "openid", "email"},
 		}
 	}

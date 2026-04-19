@@ -1347,7 +1347,7 @@ func TestRun_OAuthDialPath(t *testing.T) {
 		oauthDialCalls++
 		receivedToken = token
 		// Connect to the test server using password auth under the hood.
-		return orch.dial(srv.Addr, srv.Username, srv.Password, false)
+		return orch.dial(srv.Addr, srv.Username, srv.Password, false, nil)
 	}
 
 	result, err := orch.Run(acct.ID, 1, nil)
