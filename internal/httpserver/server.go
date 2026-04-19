@@ -14,6 +14,7 @@ import (
 	"github.com/hjiang/mnemosyne/internal/blobs"
 	"github.com/hjiang/mnemosyne/internal/jobs"
 	"github.com/hjiang/mnemosyne/internal/messages"
+	"github.com/hjiang/mnemosyne/internal/oauth"
 	"github.com/hjiang/mnemosyne/internal/search"
 	"github.com/hjiang/mnemosyne/internal/users"
 )
@@ -36,11 +37,13 @@ type Server struct {
 	messages  *messages.Repo
 	search    *search.Executor
 	blobs     *blobs.Store
+	tokenMgr  *oauth.TokenManager
 }
 
 // New creates an HTTP server with all routes wired.
 // acctRepo and orch may be nil if IMAP features are not yet configured.
-func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.Repo, orch *backup.Orchestrator, jobQueue *jobs.Queue, msgRepo *messages.Repo, searchExec *search.Executor, blobStore *blobs.Store) *Server {
+// tokenMgr may be nil when OAuth is not configured.
+func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.Repo, orch *backup.Orchestrator, jobQueue *jobs.Queue, msgRepo *messages.Repo, searchExec *search.Executor, blobStore *blobs.Store, tokenMgr *oauth.TokenManager) *Server {
 	funcMap := template.FuncMap{
 		"hexhash": hex.EncodeToString,
 	}
@@ -78,6 +81,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		messages:  msgRepo,
 		search:    searchExec,
 		blobs:     blobStore,
+		tokenMgr:  tokenMgr,
 	}
 
 	s.router.Handle("/static/*", http.FileServer(http.FS(staticFS)))
@@ -107,6 +111,8 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		r.Post("/message/{hash}/reprocess", s.messageReprocessHandler)
 		r.Get("/attachment/{id}", s.attachmentDownloadHandler)
 		r.Post("/export", s.exportHandler)
+		r.Get("/oauth/google/start", s.oauthGoogleStart)
+		r.Get("/oauth/google/callback", s.oauthGoogleCallback)
 	})
 
 	return s

@@ -44,7 +44,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	clock := &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	userRepo := users.NewRepo(database, clock.Now)
 	sessions := auth.NewSessionStore(database, clock.Now, 1*time.Hour)
-	srv := New(userRepo, sessions, nil, nil, nil, nil, nil, nil)
+	srv := New(userRepo, sessions, nil, nil, nil, nil, nil, nil, nil)
 
 	return &testEnv{
 		server:   srv,

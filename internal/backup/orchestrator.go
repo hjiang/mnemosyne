@@ -3,6 +3,7 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -66,20 +67,28 @@ type connError struct{ err error }
 func (e *connError) Error() string { return e.err.Error() }
 func (e *connError) Unwrap() error { return e.err }
 
+// TokenRefresher obtains a fresh OAuth2 access token for an account.
+type TokenRefresher interface {
+	EnsureFreshToken(ctx context.Context, accountID, userID int64) (accessToken string, err error)
+}
+
 // Orchestrator drives the backup pipeline for an IMAP account.
 type Orchestrator struct {
-	accounts *accounts.Repo
-	messages *messages.Repo
-	blobs    *blobs.Store
-	dialFunc func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
+	accounts      *accounts.Repo
+	messages      *messages.Repo
+	blobs         *blobs.Store
+	tokenRefresh  TokenRefresher
+	dialFunc      func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
+	dialOAuthFunc func(addr, user, token string, tls bool) (IMAPClient, error)                                 // nil = use imapwrap.DialOAuth
 }
 
 // NewOrchestrator creates a backup orchestrator.
-func NewOrchestrator(accts *accounts.Repo, msgs *messages.Repo, store *blobs.Store) *Orchestrator {
+func NewOrchestrator(accts *accounts.Repo, msgs *messages.Repo, store *blobs.Store, tokenRefresh TokenRefresher) *Orchestrator {
 	return &Orchestrator{
-		accounts: accts,
-		messages: msgs,
-		blobs:    store,
+		accounts:     accts,
+		messages:     msgs,
+		blobs:        store,
+		tokenRefresh: tokenRefresh,
 	}
 }
 
@@ -88,6 +97,41 @@ func (o *Orchestrator) dial(addr, user, pass string, tls bool, proxyConf *imapwr
 		return o.dialFunc(addr, user, pass, tls, proxyConf)
 	}
 	return imapwrap.Dial(addr, user, pass, tls, proxyConf)
+}
+
+func (o *Orchestrator) dialOAuth(addr, user, token string, tls bool) (IMAPClient, error) {
+	if o.dialOAuthFunc != nil {
+		return o.dialOAuthFunc(addr, user, token, tls)
+	}
+	return imapwrap.DialOAuth(addr, user, token, tls)
+}
+
+// proxyConfigFor returns the SOCKS5 proxy config for an account, or nil.
+func proxyConfigFor(acct *accounts.Account) *imapwrap.ProxyConfig {
+	if acct.ProxyHost == "" {
+		return nil
+	}
+	return &imapwrap.ProxyConfig{
+		Host:     acct.ProxyHost,
+		Port:     acct.ProxyPort,
+		Username: acct.ProxyUsername,
+		Password: acct.ProxyPassword,
+	}
+}
+
+// connectAccount dials the IMAP server with the appropriate auth method.
+func (o *Orchestrator) connectAccount(acct *accounts.Account, addr string) (IMAPClient, error) {
+	if acct.IsOAuth() {
+		if o.tokenRefresh == nil {
+			return nil, fmt.Errorf("oauth account %d but no token refresher configured", acct.ID)
+		}
+		token, err := o.tokenRefresh.EnsureFreshToken(context.Background(), acct.ID, acct.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("refreshing token: %w", err)
+		}
+		return o.dialOAuth(addr, acct.Username, token, acct.UseTLS)
+	}
+	return o.dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConfigFor(acct))
 }
 
 func (o *Orchestrator) reloadFolder(accountID, folderID int64) *accounts.Folder {
@@ -112,16 +156,7 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 	}
 
 	addr := fmt.Sprintf("%s:%d", acct.Host, acct.Port)
-	var proxyConf *imapwrap.ProxyConfig
-	if acct.ProxyHost != "" {
-		proxyConf = &imapwrap.ProxyConfig{
-			Host:     acct.ProxyHost,
-			Port:     acct.ProxyPort,
-			Username: acct.ProxyUsername,
-			Password: acct.ProxyPassword,
-		}
-	}
-	client, err := o.dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
+	client, err := o.connectAccount(acct, addr)
 	if err != nil {
 		return nil, fmt.Errorf("connecting: %w", err)
 	}
@@ -179,11 +214,11 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 
 			// Made progress — reconnect and retry.
 			_ = client.Close()
-			newClient, dialErr := o.dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
+			newClient, dialErr := o.connectAccount(acct, addr)
 			if dialErr != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("folder %q reconnect: %w", folder.Name, dialErr))
 				// Try once more so subsequent folders aren't stuck with a dead client.
-				if c, err := o.dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf); err == nil {
+				if c, err := o.connectAccount(acct, addr); err == nil {
 					client = c
 				}
 				break
