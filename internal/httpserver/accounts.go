@@ -334,12 +334,12 @@ func (s *Server) discoverFolders(acct *accounts.Account) {
 
 	if acct.IsOAuth() {
 		if s.tokenMgr == nil {
-			log.Printf("folder discovery for account %d: OAuth account but OAuth not configured", acct.ID) //nolint:gosec
+			log.Printf("folder discovery for account %d: OAuth account but OAuth not configured", acct.ID) //nolint:gosec // intentional ID logging
 			return
 		}
 		token, tokenErr := s.tokenMgr.EnsureFreshToken(context.Background(), acct.ID, acct.UserID)
 		if tokenErr != nil {
-			log.Printf("folder discovery for account %d: token refresh failed: %q", acct.ID, tokenErr) //nolint:gosec
+			log.Printf("folder discovery for account %d: token refresh failed: %v", acct.ID, tokenErr) //nolint:gosec
 			return
 		}
 		client, err = imapwrap.DialOAuth(addr, acct.Username, token, acct.UseTLS, proxyConf)
@@ -347,20 +347,20 @@ func (s *Server) discoverFolders(acct *accounts.Account) {
 		client, err = imapwrap.Dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
 	}
 	if err != nil {
-		log.Printf("folder discovery for account %d: connect failed: %q", acct.ID, err) //nolint:gosec
+		log.Printf("folder discovery for account %d: connect failed: %v", acct.ID, err) //nolint:gosec
 		return
 	}
 	defer client.Close() //nolint:errcheck
 
 	names, err := client.ListFolders()
 	if err != nil {
-		log.Printf("folder discovery for account %d: list failed: %q", acct.ID, err) //nolint:gosec
+		log.Printf("folder discovery for account %d: list failed: %v", acct.ID, err) //nolint:gosec
 		return
 	}
 
 	for _, name := range names {
 		if _, err := s.accounts.CreateFolder(acct.ID, name); err != nil {
-			log.Printf("folder discovery for account %d: creating %q: %q", acct.ID, name, err) //nolint:gosec
+			log.Printf("folder discovery for account %d: creating %q: %v", acct.ID, name, err) //nolint:gosec
 		}
 	}
 	log.Printf("folder discovery for account %d: found %d folders", acct.ID, len(names)) //nolint:gosec

@@ -100,7 +100,12 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 // renderOAuthError renders the accounts page with an error message,
 // preserving the full page data (account list, OAuth button state).
 func (s *Server) renderOAuthError(w http.ResponseWriter, r *http.Request, userID int64, errMsg string) {
-	accts, _ := s.accounts.List(userID)
+	accts, err := s.accounts.List(userID)
+	if err != nil {
+		log.Printf("render oauth error: listing accounts for user %d: %v", userID, err)
+		http.Error(w, errMsg, http.StatusInternalServerError)
+		return
+	}
 	s.render(w, r, "accounts.html", map[string]any{
 		"Title":              "Accounts",
 		"Accounts":           accts,

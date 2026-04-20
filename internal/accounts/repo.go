@@ -228,7 +228,8 @@ func (r *Repo) CreateOAuth(userID int64, label, username, authType, refreshToken
 }
 
 // UpdateTokens updates the encrypted OAuth tokens for an account.
-func (r *Repo) UpdateTokens(accountID int64, accessToken, refreshToken string, expiry int64) error {
+// enforces user isolation
+func (r *Repo) UpdateTokens(accountID, userID int64, accessToken, refreshToken string, expiry int64) error {
 	encAccess, err := r.km.Encrypt([]byte(accessToken))
 	if err != nil {
 		return fmt.Errorf("encrypting access token: %w", err)
@@ -238,8 +239,8 @@ func (r *Repo) UpdateTokens(accountID int64, accessToken, refreshToken string, e
 		return fmt.Errorf("encrypting refresh token: %w", err)
 	}
 	_, err = r.db.Exec(
-		`UPDATE imap_accounts SET access_token_enc = ?, refresh_token_enc = ?, token_expiry = ? WHERE id = ?`,
-		encAccess, encRefresh, expiry, accountID,
+		`UPDATE imap_accounts SET access_token_enc = ?, refresh_token_enc = ?, token_expiry = ? WHERE id = ? AND user_id = ?`,
+		encAccess, encRefresh, expiry, accountID, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("updating tokens: %w", err)

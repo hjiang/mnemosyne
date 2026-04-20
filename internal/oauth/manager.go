@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/url"
 	"sync"
 	"time"
@@ -41,14 +42,18 @@ func NewTokenManager(cfg config.OAuthConfig, baseURL string, acctRepo *accounts.
 		accounts: acctRepo,
 		states:   make(map[string]stateEntry),
 	}
-	if cfg.Google != nil {
-		callbackURL, _ := url.JoinPath(baseURL, "/oauth/google/callback")
-		tm.googleCfg = &oauth2.Config{
-			ClientID:     cfg.Google.ClientID,
-			ClientSecret: cfg.Google.ClientSecret,
-			Endpoint:     google.Endpoint,
-			RedirectURL:  callbackURL,
-			Scopes:       []string{gmailIMAPScope, "openid", "email"},
+	if cfg.Google != nil && cfg.Google.ClientID != "" && cfg.Google.ClientSecret != "" {
+		callbackURL, err := url.JoinPath(baseURL, "/oauth/google/callback")
+		if err != nil {
+			log.Printf("oauth: invalid base URL %q: %v; Google OAuth disabled", baseURL, err)
+		} else {
+			tm.googleCfg = &oauth2.Config{
+				ClientID:     cfg.Google.ClientID,
+				ClientSecret: cfg.Google.ClientSecret,
+				Endpoint:     google.Endpoint,
+				RedirectURL:  callbackURL,
+				Scopes:       []string{gmailIMAPScope, "openid", "email"},
+			}
 		}
 	}
 	return tm
@@ -177,7 +182,7 @@ func (tm *TokenManager) EnsureFreshToken(ctx context.Context, accountID, userID 
 	}
 
 	expiry := newTok.Expiry.Unix()
-	if err := tm.accounts.UpdateTokens(accountID, newTok.AccessToken, refreshToken, expiry); err != nil {
+	if err := tm.accounts.UpdateTokens(accountID, userID, newTok.AccessToken, refreshToken, expiry); err != nil {
 		return "", fmt.Errorf("storing refreshed tokens: %w", err)
 	}
 

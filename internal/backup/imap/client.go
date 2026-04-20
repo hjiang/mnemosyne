@@ -126,10 +126,15 @@ func dialViaProxy(addr string, useTLS bool, pc *ProxyConfig, opts *imapclient.Op
 }
 
 // DialOAuth connects to an IMAP server and authenticates using OAUTHBEARER.
-// Set tls to true for implicit TLS (port 993).
+// TLS is required — sending bearer tokens over plaintext is a credential
+// disclosure risk. Set useTLS to true for implicit TLS (port 993).
 // If proxyConf is non-nil and has a non-empty Host, the connection is routed
 // through a SOCKS5 proxy.
 func DialOAuth(addr, username, accessToken string, useTLS bool, proxyConf *ProxyConfig) (*Client, error) {
+	if !useTLS {
+		return nil, fmt.Errorf("OAuth requires TLS; refusing plaintext connection to %s", addr)
+	}
+
 	opts := &imapclient.Options{
 		WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
 	}
@@ -140,10 +145,8 @@ func DialOAuth(addr, username, accessToken string, useTLS bool, proxyConf *Proxy
 	switch {
 	case proxyConf != nil && proxyConf.Host != "":
 		raw, err = dialViaProxy(addr, useTLS, proxyConf, opts)
-	case useTLS:
-		raw, err = imapclient.DialTLS(addr, opts)
 	default:
-		raw, err = imapclient.DialInsecure(addr, opts)
+		raw, err = imapclient.DialTLS(addr, opts)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("connecting to %s: %w", addr, err)
