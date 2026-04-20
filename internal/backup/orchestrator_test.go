@@ -1343,7 +1343,7 @@ func TestRun_OAuthDialPath(t *testing.T) {
 	// Override dialOAuthFunc to use the test IMAP server with password auth
 	// (the test server doesn't support OAUTHBEARER, but we can verify the
 	// orchestrator chose the right path and passed the right token).
-	orch.dialOAuthFunc = func(_, _, token string, _ bool) (IMAPClient, error) {
+	orch.dialOAuthFunc = func(_, _, token string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
 		oauthDialCalls++
 		receivedToken = token
 		// Connect to the test server using password auth under the hood.

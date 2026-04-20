@@ -342,7 +342,7 @@ func (s *Server) discoverFolders(acct *accounts.Account) {
 			log.Printf("folder discovery for account %d: token refresh failed: %q", acct.ID, tokenErr) //nolint:gosec
 			return
 		}
-		client, err = imapwrap.DialOAuth(addr, acct.Username, token, acct.UseTLS)
+		client, err = imapwrap.DialOAuth(addr, acct.Username, token, acct.UseTLS, proxyConf)
 	} else {
 		client, err = imapwrap.Dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
 	}

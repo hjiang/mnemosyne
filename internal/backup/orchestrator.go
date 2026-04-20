@@ -79,7 +79,7 @@ type Orchestrator struct {
 	blobs         *blobs.Store
 	tokenRefresh  TokenRefresher
 	dialFunc      func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
-	dialOAuthFunc func(addr, user, token string, tls bool) (IMAPClient, error)                                 // nil = use imapwrap.DialOAuth
+	dialOAuthFunc func(addr, user, token string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.DialOAuth
 }
 
 // NewOrchestrator creates a backup orchestrator.
@@ -99,11 +99,11 @@ func (o *Orchestrator) dial(addr, user, pass string, tls bool, proxyConf *imapwr
 	return imapwrap.Dial(addr, user, pass, tls, proxyConf)
 }
 
-func (o *Orchestrator) dialOAuth(addr, user, token string, tls bool) (IMAPClient, error) {
+func (o *Orchestrator) dialOAuth(addr, user, token string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) {
 	if o.dialOAuthFunc != nil {
-		return o.dialOAuthFunc(addr, user, token, tls)
+		return o.dialOAuthFunc(addr, user, token, tls, proxyConf)
 	}
-	return imapwrap.DialOAuth(addr, user, token, tls)
+	return imapwrap.DialOAuth(addr, user, token, tls, proxyConf)
 }
 
 // proxyConfigFor returns the SOCKS5 proxy config for an account, or nil.
@@ -129,7 +129,7 @@ func (o *Orchestrator) connectAccount(acct *accounts.Account, addr string) (IMAP
 		if err != nil {
 			return nil, fmt.Errorf("refreshing token: %w", err)
 		}
-		return o.dialOAuth(addr, acct.Username, token, acct.UseTLS)
+		return o.dialOAuth(addr, acct.Username, token, acct.UseTLS, proxyConfigFor(acct))
 	}
 	return o.dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConfigFor(acct))
 }
