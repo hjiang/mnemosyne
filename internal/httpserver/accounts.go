@@ -21,7 +21,16 @@ import (
 // renderAccountsPage renders accounts.html with a consistent set of fields
 // (account list, OAuth button state) so all code paths show the same UI.
 func (s *Server) renderAccountsPage(w http.ResponseWriter, r *http.Request, userID int64, errMsg string) {
-	accts, _ := s.accounts.List(userID)
+	if s.accounts == nil {
+		http.Error(w, "IMAP accounts not configured", http.StatusNotFound)
+		return
+	}
+	accts, err := s.accounts.List(userID)
+	if err != nil {
+		log.Printf("listing accounts for user %d: %v", userID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	data := map[string]any{
 		"Title":              "Accounts",
 		"Accounts":           accts,
