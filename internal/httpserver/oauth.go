@@ -21,6 +21,7 @@ func (s *Server) oauthGoogleStart(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	url, _, err := s.tokenMgr.AuthCodeURL(userID)
 	if err != nil {
+		log.Printf("oauthGoogleStart: failed to generate auth URL for user %d: %v", userID, err)
 		http.Error(w, "failed to generate auth URL", http.StatusInternalServerError)
 		return
 	}
