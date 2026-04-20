@@ -202,6 +202,30 @@ func TestOAuthCallback_CrossUserState(t *testing.T) {
 	}
 }
 
+// Test: /oauth/google/callback returns 400 when code parameter is missing.
+func TestOAuthCallback_MissingCode(t *testing.T) {
+	env := newOAuthTestEnv(t, true)
+
+	// Generate a valid state.
+	_, state, err := env.tokenMgr.AuthCodeURL(env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Callback with valid state but no code (and no error).
+	req := httptest.NewRequest("GET", "/oauth/google/callback?state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: "mnemosyne_session", Value: env.cookie})
+	rr := httptest.NewRecorder()
+	env.server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rr.Body.String(), "missing authorization code") {
+		t.Errorf("body = %q, want missing code error", rr.Body.String())
+	}
+}
+
 // Test: /oauth/google/start requires authentication.
 func TestOAuthStart_Unauthenticated_Redirects(t *testing.T) {
 	env := newOAuthTestEnv(t, true)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -352,7 +353,9 @@ func (s *Server) discoverFolders(acct *accounts.Account) {
 			log.Printf("folder discovery for account %d: OAuth account but OAuth not configured", acct.ID) //nolint:gosec // intentional ID logging
 			return
 		}
-		token, tokenErr := s.tokenMgr.EnsureFreshToken(context.Background(), acct.ID, acct.UserID)
+		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer refreshCancel()
+		token, tokenErr := s.tokenMgr.EnsureFreshToken(refreshCtx, acct.ID, acct.UserID)
 		if tokenErr != nil {
 			log.Printf("folder discovery for account %d: token refresh failed: %v", acct.ID, tokenErr) //nolint:gosec
 			return

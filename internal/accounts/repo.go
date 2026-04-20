@@ -10,7 +10,14 @@ import (
 var (
 	// ErrNotFound indicates the requested account or folder was not found.
 	ErrNotFound = errors.New("not found")
+	// ErrUnsupportedAuthType indicates an unrecognized auth_type value.
+	ErrUnsupportedAuthType = errors.New("unsupported auth type")
 )
+
+// validOAuthAuthTypes lists recognized OAuth auth_type values.
+var validOAuthAuthTypes = map[string]bool{
+	"oauth_google": true,
+}
 
 // Account represents an IMAP account.
 type Account struct {
@@ -192,6 +199,9 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 // Host, port, and TLS are set to Google IMAP defaults.
 // enforces user isolation
 func (r *Repo) CreateOAuth(userID int64, label, username, authType, refreshToken, accessToken string, tokenExpiry int64) (*Account, error) {
+	if !validOAuthAuthTypes[authType] {
+		return nil, fmt.Errorf("%w: %q", ErrUnsupportedAuthType, authType)
+	}
 	encPwd, err := r.km.Encrypt([]byte(""))
 	if err != nil {
 		return nil, fmt.Errorf("encrypting empty password: %w", err)

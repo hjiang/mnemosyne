@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hjiang/mnemosyne/internal/testimap"
@@ -226,6 +227,16 @@ func TestFetchBodies_Empty(t *testing.T) {
 	}
 	if bodies != nil || missing != nil {
 		t.Errorf("expected nil results for empty input")
+	}
+}
+
+func TestDialOAuth_RejectsPlaintext(t *testing.T) {
+	_, err := DialOAuth("imap.example.com:143", "user", "token", false, nil)
+	if err == nil {
+		t.Fatal("expected error for non-TLS OAuth connection")
+	}
+	if !strings.Contains(err.Error(), "requires TLS") {
+		t.Errorf("error = %q, want mention of TLS requirement", err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hjiang/mnemosyne/internal/accounts"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
@@ -1451,5 +1452,73 @@ func TestRun_OAuthNilRefresher(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no token refresher") {
 		t.Errorf("error = %q, want it to contain 'no token refresher'", err)
+	}
+}
+
+// blockingTokenRefresher blocks until the context is cancelled, simulating
+// a stalled HTTP token refresh.
+type blockingTokenRefresher struct {
+	calls int
+}
+
+func (b *blockingTokenRefresher) EnsureFreshToken(ctx context.Context, _, _ int64) (string, error) {
+	b.calls++
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// Test: connectAccount should time out if token refresh hangs indefinitely.
+func TestRun_OAuthTokenRefreshTimeout(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	km, err := accounts.NewKeyManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "test@test.com", "h", 0) //nolint:errcheck,gosec
+
+	acctRepo := accounts.NewRepo(database, km)
+	msgRepo := messages.NewRepo(database)
+	store := blobs.NewStore(filepath.Join(dir, "blobs"))
+
+	acct, err := acctRepo.CreateOAuth(1, "oauth-test", "user@example.com", "oauth_google", "refresh-tok", "access-tok", 9999999999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := acctRepo.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = acctRepo.SetFolderEnabled(folder.ID, true)
+
+	refresher := &blockingTokenRefresher{}
+	orch := NewOrchestrator(acctRepo, msgRepo, store, refresher)
+	orch.tokenRefreshTimeout = 10 * time.Millisecond
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = orch.Run(acct.ID, 1, nil)
+		close(done)
+	}()
+
+	// The run should complete quickly (the 500ms token refresh timeout
+	// should kick in) rather than blocking forever.
+	select {
+	case <-done:
+		// Success: Run returned.
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run blocked; token refresh timeout did not fire")
+	}
+
+	if refresher.calls == 0 {
+		t.Error("expected EnsureFreshToken to be called")
 	}
 }

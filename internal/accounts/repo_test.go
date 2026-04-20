@@ -495,3 +495,27 @@ func TestUpdate_WithProxy(t *testing.T) {
 		t.Errorf("ProxyPassword = %q, want empty", got.ProxyPassword)
 	}
 }
+
+func TestCreateOAuth_RejectsInvalidAuthType(t *testing.T) {
+	env := newTestEnv(t)
+
+	_, err := env.repo.CreateOAuth(env.userA, "Bad", "user@example.com", "oauth_github", "refresh", "access", 9999)
+	if err == nil {
+		t.Fatal("expected error for unsupported auth type")
+	}
+	if !errors.Is(err, ErrUnsupportedAuthType) {
+		t.Errorf("error = %v, want ErrUnsupportedAuthType", err)
+	}
+}
+
+func TestCreateOAuth_AcceptsValidAuthType(t *testing.T) {
+	env := newTestEnv(t)
+
+	acct, err := env.repo.CreateOAuth(env.userA, "Google", "user@example.com", "oauth_google", "refresh", "access", 9999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.AuthType != "oauth_google" {
+		t.Errorf("AuthType = %q, want %q", acct.AuthType, "oauth_google")
+	}
+}

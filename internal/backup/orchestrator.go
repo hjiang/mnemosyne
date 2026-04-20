@@ -74,12 +74,13 @@ type TokenRefresher interface {
 
 // Orchestrator drives the backup pipeline for an IMAP account.
 type Orchestrator struct {
-	accounts      *accounts.Repo
-	messages      *messages.Repo
-	blobs         *blobs.Store
-	tokenRefresh  TokenRefresher
-	dialFunc      func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
-	dialOAuthFunc func(addr, user, token string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.DialOAuth
+	accounts            *accounts.Repo
+	messages            *messages.Repo
+	blobs               *blobs.Store
+	tokenRefresh        TokenRefresher
+	tokenRefreshTimeout time.Duration                                                                               // 0 = use default
+	dialFunc            func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
+	dialOAuthFunc       func(addr, user, token string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.DialOAuth
 }
 
 // NewOrchestrator creates a backup orchestrator.
@@ -119,13 +120,22 @@ func proxyConfigFor(acct *accounts.Account) *imapwrap.ProxyConfig {
 	}
 }
 
+// tokenRefreshTimeout bounds how long a token refresh HTTP call can take.
+const tokenRefreshTimeout = 30 * time.Second
+
 // connectAccount dials the IMAP server with the appropriate auth method.
 func (o *Orchestrator) connectAccount(acct *accounts.Account, addr string) (IMAPClient, error) {
 	if acct.IsOAuth() {
 		if o.tokenRefresh == nil {
 			return nil, fmt.Errorf("oauth account %d but no token refresher configured", acct.ID)
 		}
-		token, err := o.tokenRefresh.EnsureFreshToken(context.Background(), acct.ID, acct.UserID)
+		timeout := o.tokenRefreshTimeout
+		if timeout == 0 {
+			timeout = tokenRefreshTimeout
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		token, err := o.tokenRefresh.EnsureFreshToken(ctx, acct.ID, acct.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("refreshing token: %w", err)
 		}
