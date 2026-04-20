@@ -18,18 +18,24 @@ import (
 	"github.com/hjiang/mnemosyne/internal/scheduler"
 )
 
-func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
-	userID := auth.UserIDFromContext(r.Context())
-	accts, err := s.accounts.List(userID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	s.render(w, r, "accounts.html", map[string]any{
+// renderAccountsPage renders accounts.html with a consistent set of fields
+// (account list, OAuth button state) so all code paths show the same UI.
+func (s *Server) renderAccountsPage(w http.ResponseWriter, r *http.Request, userID int64, errMsg string) {
+	accts, _ := s.accounts.List(userID)
+	data := map[string]any{
 		"Title":              "Accounts",
 		"Accounts":           accts,
 		"OAuthGoogleEnabled": s.tokenMgr != nil,
-	})
+	}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	}
+	s.render(w, r, "accounts.html", data)
+}
+
+func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	s.renderAccountsPage(w, r, userID, "")
 }
 
 func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
@@ -38,14 +44,14 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
 
 	in, formErr := parseAccountForm(r)
 	if formErr != "" {
-		s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Error": formErr})
+		s.renderAccountsPage(w, r, userID, formErr)
 		return
 	}
 
 	acct, err := s.accounts.Create(userID, in.Label, in.Host, in.Port, in.Username, in.Password, in.UseTLS,
 		in.ProxyHost, in.ProxyPort, in.ProxyUsername, in.ProxyPassword)
 	if err != nil {
-		s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Failed to create account."})
+		s.renderAccountsPage(w, r, userID, "Failed to create account.")
 		return
 	}
 

@@ -37,26 +37,28 @@ type TokenManager struct {
 }
 
 // NewTokenManager creates a token manager for the configured OAuth providers.
+// Returns nil if no provider is fully configured (missing credentials or
+// invalid base URL), so callers can use a nil check as the "OAuth enabled" guard.
 func NewTokenManager(cfg config.OAuthConfig, baseURL string, acctRepo *accounts.Repo) *TokenManager {
-	tm := &TokenManager{
+	if cfg.Google == nil || cfg.Google.ClientID == "" || cfg.Google.ClientSecret == "" {
+		return nil
+	}
+	callbackURL, err := url.JoinPath(baseURL, "/oauth/google/callback")
+	if err != nil {
+		log.Printf("oauth: invalid base URL %q: %v; Google OAuth disabled", baseURL, err)
+		return nil
+	}
+	return &TokenManager{
 		accounts: acctRepo,
 		states:   make(map[string]stateEntry),
+		googleCfg: &oauth2.Config{
+			ClientID:     cfg.Google.ClientID,
+			ClientSecret: cfg.Google.ClientSecret,
+			Endpoint:     google.Endpoint,
+			RedirectURL:  callbackURL,
+			Scopes:       []string{gmailIMAPScope, "openid", "email"},
+		},
 	}
-	if cfg.Google != nil && cfg.Google.ClientID != "" && cfg.Google.ClientSecret != "" {
-		callbackURL, err := url.JoinPath(baseURL, "/oauth/google/callback")
-		if err != nil {
-			log.Printf("oauth: invalid base URL %q: %v; Google OAuth disabled", baseURL, err)
-		} else {
-			tm.googleCfg = &oauth2.Config{
-				ClientID:     cfg.Google.ClientID,
-				ClientSecret: cfg.Google.ClientSecret,
-				Endpoint:     google.Endpoint,
-				RedirectURL:  callbackURL,
-				Scopes:       []string{gmailIMAPScope, "openid", "email"},
-			}
-		}
-	}
-	return tm
 }
 
 // maxPendingStates caps the number of in-flight OAuth states to prevent
@@ -146,6 +148,12 @@ const tokenExpiryBuffer = 5 * time.Minute
 // expired. Returns a valid access token. This is the method called by
 // the backup orchestrator before each IMAP dial.
 func (tm *TokenManager) EnsureFreshToken(ctx context.Context, accountID, userID int64) (string, error) {
+	if tm.accounts == nil {
+		return "", fmt.Errorf("token manager has no accounts repo")
+	}
+	if tm.googleCfg == nil {
+		return "", fmt.Errorf("google oauth not configured")
+	}
 	acct, err := tm.accounts.GetByID(accountID, userID)
 	if err != nil {
 		return "", fmt.Errorf("loading account: %w", err)

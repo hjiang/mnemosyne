@@ -108,7 +108,9 @@ func runServe() error {
 	var tokenMgr *oauth.TokenManager
 	if cfg.OAuthGoogleEnabled() {
 		tokenMgr = oauth.NewTokenManager(cfg.OAuth, cfg.BaseURL, acctRepo)
-		log.Print("Google OAuth enabled")
+		if tokenMgr != nil {
+			log.Print("Google OAuth enabled")
+		}
 	}
 
 	orch := backup.NewOrchestrator(acctRepo, msgRepo, blobStore, tokenMgr)

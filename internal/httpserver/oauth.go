@@ -56,8 +56,14 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Exchange authorization code for tokens.
+	// Validate that Google returned an authorization code.
 	code := r.URL.Query().Get("code")
+	if code == "" {
+		http.Error(w, "missing authorization code", http.StatusBadRequest)
+		return
+	}
+
+	// Exchange authorization code for tokens.
 	tok, err := s.tokenMgr.Exchange(r.Context(), code)
 	if err != nil {
 		log.Printf("oauth token exchange: %v", err)
@@ -100,18 +106,7 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 // renderOAuthError renders the accounts page with an error message,
 // preserving the full page data (account list, OAuth button state).
 func (s *Server) renderOAuthError(w http.ResponseWriter, r *http.Request, userID int64, errMsg string) {
-	accts, err := s.accounts.List(userID)
-	if err != nil {
-		log.Printf("render oauth error: listing accounts for user %d: %v", userID, err)
-		http.Error(w, errMsg, http.StatusInternalServerError)
-		return
-	}
-	s.render(w, r, "accounts.html", map[string]any{
-		"Title":              "Accounts",
-		"Accounts":           accts,
-		"OAuthGoogleEnabled": s.tokenMgr != nil,
-		"Error":              errMsg,
-	})
+	s.renderAccountsPage(w, r, userID, errMsg)
 }
 
 // userinfoTimeout is the maximum time to wait for Google's userinfo endpoint.

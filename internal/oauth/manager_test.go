@@ -7,11 +7,10 @@ import (
 	"github.com/hjiang/mnemosyne/internal/config"
 )
 
-func TestAuthCodeURL_NotConfigured(t *testing.T) {
+func TestNewTokenManager_NotConfigured_ReturnsNil(t *testing.T) {
 	tm := NewTokenManager(config.OAuthConfig{}, "http://localhost", nil)
-	_, _, err := tm.AuthCodeURL(1)
-	if err == nil {
-		t.Fatal("expected error when google oauth not configured")
+	if tm != nil {
+		t.Fatal("expected nil TokenManager when google oauth not configured")
 	}
 }
 
@@ -71,7 +70,13 @@ func TestValidateState_Valid(t *testing.T) {
 }
 
 func TestValidateState_Unknown(t *testing.T) {
-	tm := NewTokenManager(config.OAuthConfig{}, "http://localhost", nil)
+	cfg := config.OAuthConfig{
+		Google: &config.OAuthProviderConfig{
+			ClientID:     "test-id",
+			ClientSecret: "test-secret",
+		},
+	}
+	tm := NewTokenManager(cfg, "http://localhost:8080", nil)
 	_, ok := tm.ValidateState("nonexistent")
 	if ok {
 		t.Error("expected unknown state to be invalid")
