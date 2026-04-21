@@ -42,9 +42,9 @@ type Account struct {
 	ProxyPassword string // decrypted
 }
 
-// IsOAuth returns true if the account uses OAuth authentication.
+// IsOAuth returns true if the account uses a recognized OAuth authentication type.
 func (a *Account) IsOAuth() bool {
-	return a.AuthType != "" && a.AuthType != "password"
+	return validOAuthAuthTypes[a.AuthType]
 }
 
 // Folder represents an IMAP folder within an account.

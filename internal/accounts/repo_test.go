@@ -496,6 +496,31 @@ func TestUpdate_WithProxy(t *testing.T) {
 	}
 }
 
+func TestIsOAuth_UnrecognizedAuthType(t *testing.T) {
+	// An account with a typo'd or unknown auth_type should NOT be treated as OAuth.
+	a := &Account{AuthType: "oauth_github"}
+	if a.IsOAuth() {
+		t.Errorf("IsOAuth() = true for unrecognized auth_type %q, want false", a.AuthType)
+	}
+}
+
+func TestIsOAuth_RecognizedTypes(t *testing.T) {
+	tests := []struct {
+		authType string
+		want     bool
+	}{
+		{"", false},
+		{"password", false},
+		{"oauth_google", true},
+	}
+	for _, tt := range tests {
+		a := &Account{AuthType: tt.authType}
+		if got := a.IsOAuth(); got != tt.want {
+			t.Errorf("IsOAuth() for %q = %v, want %v", tt.authType, got, tt.want)
+		}
+	}
+}
+
 func TestCreateOAuth_RejectsInvalidAuthType(t *testing.T) {
 	env := newTestEnv(t)
 
