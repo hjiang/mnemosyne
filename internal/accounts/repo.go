@@ -154,7 +154,7 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 	rows, err := r.db.Query(
 		`SELECT id, user_id, label, host, port, username, password_enc, use_tls, last_sync_at,
 		        proxy_host, proxy_port, proxy_username, proxy_password_enc,
-		        auth_type, refresh_token_enc, access_token_enc, token_expiry
+		        auth_type, token_expiry
 		 FROM imap_accounts WHERE user_id = ?`,
 		userID,
 	)
@@ -168,10 +168,9 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 		var a Account
 		var encPwd, proxyPwdEnc []byte
 		var tls int
-		var encRefresh, encAccess []byte
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Label, &a.Host, &a.Port, &a.Username, &encPwd, &tls, &a.LastSyncAt,
 			&a.ProxyHost, &a.ProxyPort, &a.ProxyUsername, &proxyPwdEnc,
-			&a.AuthType, &encRefresh, &encAccess, &a.TokenExpiry); err != nil {
+			&a.AuthType, &a.TokenExpiry); err != nil {
 			return nil, fmt.Errorf("scanning account: %w", err)
 		}
 		pwd, err := r.km.Decrypt(encPwd)
@@ -187,9 +186,6 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 			}
 			a.ProxyPassword = string(proxyPwd)
 		}
-		// Intentionally skip decryptTokens — List is used by UI handlers
-		// that don't need OAuth secrets. Tokens are decrypted in GetByID
-		// for the orchestrator/token-refresh path only.
 		accounts = append(accounts, &a)
 	}
 	return accounts, rows.Err()

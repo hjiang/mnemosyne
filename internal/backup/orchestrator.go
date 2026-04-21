@@ -120,8 +120,8 @@ func proxyConfigFor(acct *accounts.Account) *imapwrap.ProxyConfig {
 	}
 }
 
-// tokenRefreshTimeout bounds how long a token refresh HTTP call can take.
-const tokenRefreshTimeout = 30 * time.Second
+// defaultTokenRefreshTimeout bounds how long a token refresh HTTP call can take.
+const defaultTokenRefreshTimeout = 30 * time.Second
 
 // connectAccount dials the IMAP server with the appropriate auth method.
 func (o *Orchestrator) connectAccount(acct *accounts.Account, addr string) (IMAPClient, error) {
@@ -131,7 +131,7 @@ func (o *Orchestrator) connectAccount(acct *accounts.Account, addr string) (IMAP
 		}
 		timeout := o.tokenRefreshTimeout
 		if timeout == 0 {
-			timeout = tokenRefreshTimeout
+			timeout = defaultTokenRefreshTimeout
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
