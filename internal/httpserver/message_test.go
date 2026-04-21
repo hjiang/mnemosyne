@@ -43,7 +43,7 @@ func newMessageTestEnv(t *testing.T) *messageTestEnv {
 	sessions := auth.NewSessionStore(database, clock.Now, 1*time.Hour)
 	msgRepo := messages.NewRepo(database)
 	blobStore := blobs.NewStore(filepath.Join(dir, "blobs"))
-	srv := New(userRepo, sessions, nil, nil, nil, msgRepo, nil, blobStore)
+	srv := New(userRepo, sessions, nil, nil, nil, msgRepo, nil, blobStore, nil)
 
 	hashA, _ := auth.HashPassword("pass")
 	uA, _ := userRepo.Create("a@test.com", hashA)

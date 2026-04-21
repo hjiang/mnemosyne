@@ -2,6 +2,7 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hjiang/mnemosyne/internal/accounts"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
@@ -137,7 +139,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	orch := NewOrchestrator(acctRepo, msgRepo, store)
+	orch := NewOrchestrator(acctRepo, msgRepo, store, nil)
 
 	return &testEnv{
 		orchestrator: orch,
@@ -390,7 +392,7 @@ func TestOrchestrator_UserIsolation(t *testing.T) {
 	acctRepo := accounts.NewRepo(database, km)
 	msgRepo := messages.NewRepo(database)
 	store := blobs.NewStore(filepath.Join(dir, "blobs"))
-	orch := NewOrchestrator(acctRepo, msgRepo, store)
+	orch := NewOrchestrator(acctRepo, msgRepo, store, nil)
 
 	// User A's server and account (unique messages for user A).
 	srvA := testimap.New(t)
@@ -1282,5 +1284,241 @@ func TestOrchestrator_EnvelopeFetchEOF_NoProgress(t *testing.T) {
 	// Should have errors reported.
 	if len(result.Errors) == 0 {
 		t.Error("expected errors to be reported")
+	}
+}
+
+// fakeTokenRefresher implements TokenRefresher for testing.
+type fakeTokenRefresher struct {
+	token string
+	err   error
+	calls int
+}
+
+func (f *fakeTokenRefresher) EnsureFreshToken(_ context.Context, _, _ int64) (string, error) {
+	f.calls++
+	return f.token, f.err
+}
+
+func TestRun_OAuthDialPath(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	km, err := accounts.NewKeyManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "test@test.com", "h", 0) //nolint:errcheck,gosec
+
+	acctRepo := accounts.NewRepo(database, km)
+	msgRepo := messages.NewRepo(database)
+	store := blobs.NewStore(filepath.Join(dir, "blobs"))
+
+	// Create an OAuth account.
+	acct, err := acctRepo.CreateOAuth(1, "oauth-test", "user@example.com", "oauth_google", "refresh-tok", "access-tok", 9999999999)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up a fake IMAP server and enable a folder.
+	srv := testimap.New(t)
+	srv.AddFolder(t, "INBOX", 1)
+	srv.SeedMessages(t, "INBOX", 2)
+	folder, err := acctRepo.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = acctRepo.SetFolderEnabled(folder.ID, true)
+
+	refresher := &fakeTokenRefresher{token: "fresh-access-token"}
+	var oauthDialCalls int
+	var receivedToken string
+
+	orch := NewOrchestrator(acctRepo, msgRepo, store, refresher)
+	// Override dialOAuthFunc to use the test IMAP server with password auth
+	// (the test server doesn't support OAUTHBEARER, but we can verify the
+	// orchestrator chose the right path and passed the right token).
+	orch.dialOAuthFunc = func(_, _, token string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		oauthDialCalls++
+		receivedToken = token
+		// Connect to the test server using password auth under the hood.
+		return orch.dial(srv.Addr, srv.Username, srv.Password, false, nil)
+	}
+
+	result, err := orch.Run(acct.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if oauthDialCalls == 0 {
+		t.Error("expected orchestrator to use OAuth dial path")
+	}
+	if receivedToken != "fresh-access-token" {
+		t.Errorf("token = %q, want %q", receivedToken, "fresh-access-token")
+	}
+	if refresher.calls == 0 {
+		t.Error("expected EnsureFreshToken to be called")
+	}
+	if result.NewLocations != 2 {
+		t.Errorf("NewLocations = %d, want 2", result.NewLocations)
+	}
+}
+
+func TestRun_OAuthRefresherError(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	km, err := accounts.NewKeyManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "test@test.com", "h", 0) //nolint:errcheck,gosec
+
+	acctRepo := accounts.NewRepo(database, km)
+	msgRepo := messages.NewRepo(database)
+	store := blobs.NewStore(filepath.Join(dir, "blobs"))
+
+	acct, err := acctRepo.CreateOAuth(1, "oauth-test", "user@example.com", "oauth_google", "refresh-tok", "access-tok", 9999999999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := acctRepo.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = acctRepo.SetFolderEnabled(folder.ID, true)
+
+	refresher := &fakeTokenRefresher{err: fmt.Errorf("token revoked")}
+	orch := NewOrchestrator(acctRepo, msgRepo, store, refresher)
+
+	_, err = orch.Run(acct.ID, 1, nil)
+	if err == nil {
+		t.Fatal("expected error when token refresh fails")
+	}
+	if !strings.Contains(err.Error(), "token revoked") {
+		t.Errorf("error = %q, want it to contain 'token revoked'", err)
+	}
+}
+
+func TestRun_OAuthNilRefresher(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	km, err := accounts.NewKeyManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "test@test.com", "h", 0) //nolint:errcheck,gosec
+
+	acctRepo := accounts.NewRepo(database, km)
+	msgRepo := messages.NewRepo(database)
+	store := blobs.NewStore(filepath.Join(dir, "blobs"))
+
+	acct, err := acctRepo.CreateOAuth(1, "oauth-test", "user@example.com", "oauth_google", "refresh-tok", "access-tok", 9999999999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := acctRepo.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = acctRepo.SetFolderEnabled(folder.ID, true)
+
+	orch := NewOrchestrator(acctRepo, msgRepo, store, nil)
+
+	_, err = orch.Run(acct.ID, 1, nil)
+	if err == nil {
+		t.Fatal("expected error when OAuth account has no token refresher")
+	}
+	if !strings.Contains(err.Error(), "no token refresher") {
+		t.Errorf("error = %q, want it to contain 'no token refresher'", err)
+	}
+}
+
+// blockingTokenRefresher blocks until the context is cancelled, simulating
+// a stalled HTTP token refresh.
+type blockingTokenRefresher struct {
+	calls int
+}
+
+func (b *blockingTokenRefresher) EnsureFreshToken(ctx context.Context, _, _ int64) (string, error) {
+	b.calls++
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// Test: connectAccount should time out if token refresh hangs indefinitely.
+func TestRun_OAuthTokenRefreshTimeout(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	km, err := accounts.NewKeyManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "test@test.com", "h", 0) //nolint:errcheck,gosec
+
+	acctRepo := accounts.NewRepo(database, km)
+	msgRepo := messages.NewRepo(database)
+	store := blobs.NewStore(filepath.Join(dir, "blobs"))
+
+	acct, err := acctRepo.CreateOAuth(1, "oauth-test", "user@example.com", "oauth_google", "refresh-tok", "access-tok", 9999999999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := acctRepo.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = acctRepo.SetFolderEnabled(folder.ID, true)
+
+	refresher := &blockingTokenRefresher{}
+	orch := NewOrchestrator(acctRepo, msgRepo, store, refresher)
+	orch.tokenRefreshTimeout = 10 * time.Millisecond
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = orch.Run(acct.ID, 1, nil)
+		close(done)
+	}()
+
+	// The run should complete quickly (the 10ms token refresh timeout
+	// should kick in) rather than blocking forever.
+	select {
+	case <-done:
+		// Success: Run returned.
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run blocked; token refresh timeout did not fire")
+	}
+
+	if refresher.calls == 0 {
+		t.Error("expected EnsureFreshToken to be called")
 	}
 }

@@ -4,7 +4,7 @@ A self-hosted web application that pulls emails from IMAP servers and makes them
 
 ## Features
 
-- **IMAP backup** — Connect any number of IMAP accounts, select folders to back up, and sync on a schedule or manually. Messages are stored exactly once via content-addressed dedup (SHA-256). Optional per-account SOCKS5 proxy for accounts that aren't reachable directly.
+- **IMAP backup** — Connect any number of IMAP accounts, select folders to back up, and sync on a schedule or manually. Messages are stored exactly once via content-addressed dedup (SHA-256). Supports both password and OAuth2 authentication. Optional per-account SOCKS5 proxy for accounts that aren't reachable directly.
 - **Full-text search** — Gmail-style query syntax: `from:alice subject:"quarterly report" budget has:attachment before:2026-01-01`. Powered by SQLite FTS5.
 - **Attachment text extraction** — PDF (via pdftotext), DOCX, HTML, and plain text attachments are indexed so you can search their contents.
 - **Retention policies** — Keep all messages on the server, keep the N newest, or keep messages younger than N days. Messages are only deleted from the upstream server after the local backup is confirmed durable.
@@ -106,13 +106,41 @@ docker run -d \
   ghcr.io/hjiang/mnemosyne:latest
 ```
 
-### 5. Gmail-specific notes
+### 5. Gmail / Google Workspace
 
-Gmail requires an **App Password** instead of your regular password:
+#### Option A: OAuth2 (recommended for Google Workspace)
+
+If your organization disables app passwords, use OAuth2:
+
+1. Create a project in the [Google Cloud Console](https://console.cloud.google.com/).
+2. Enable the **Gmail API**.
+3. Go to **APIs & Services > Credentials** and create an **OAuth 2.0 Client ID** (Web application type).
+4. Add `http://<your-mnemosyne-url>/oauth/google/callback` as an authorized redirect URI.
+5. Set the client ID and secret in your Mnemosyne config:
+
+   ```bash
+   docker run -d \
+     --name mnemosyne \
+     -p 8080:8080 \
+     -v /mnt/user/appdata/mnemosyne:/var/lib/mnemosyne \
+     -e MNEMOSYNE_OAUTH_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com \
+     -e MNEMOSYNE_OAUTH_GOOGLE_CLIENT_SECRET=your-client-secret \
+     ghcr.io/hjiang/mnemosyne:latest
+   ```
+
+6. In the Mnemosyne UI, go to **Accounts** and click **Connect with Google**.
+
+Mnemosyne does not need to be publicly accessible — the OAuth redirect goes through your browser. Only token exchange (an outbound HTTPS call from Mnemosyne to Google) requires internet access.
+
+#### Option B: App Password
+
+If your account supports app passwords:
 
 1. Go to [Google Account > Security > 2-Step Verification > App passwords](https://myaccount.google.com/apppasswords).
 2. Generate an app password for "Mail".
 3. Use `imap.gmail.com`, port `993`, TLS enabled, and the app password.
+
+#### Gmail folder notes
 
 Gmail's IMAP maps labels to folders. Common ones to back up: `INBOX`, `[Gmail]/Sent Mail`, `[Gmail]/All Mail`.
 
@@ -159,8 +187,10 @@ Mnemosyne works with zero configuration. All settings have sensible defaults and
 |---|---|---|
 | `MNEMOSYNE_LISTEN` | `:8080` | Address and port to listen on |
 | `MNEMOSYNE_DATA_DIR` | `/var/lib/mnemosyne` | Directory for database, blobs, and encryption key |
-| `MNEMOSYNE_BASE_URL` | `http://localhost:8080` | Public URL (for redirects) |
+| `MNEMOSYNE_BASE_URL` | `http://localhost:8080` | Public URL (for redirects and OAuth callback) |
 | `MNEMOSYNE_CONFIG` | `/etc/mnemosyne/config.yaml` | Path to optional YAML config file |
+| `MNEMOSYNE_OAUTH_GOOGLE_CLIENT_ID` | *(none)* | Google OAuth client ID (enables "Connect with Google") |
+| `MNEMOSYNE_OAUTH_GOOGLE_CLIENT_SECRET` | *(none)* | Google OAuth client secret |
 
 ### YAML config file
 
@@ -173,6 +203,12 @@ session_ttl: 720h    # 30 days
 backup:
   default_schedule: "0 3 * * *"   # daily at 3 AM
   max_concurrent: 2
+
+# Optional: enable Google OAuth for IMAP accounts
+oauth:
+  google:
+    client_id: "your-client-id.apps.googleusercontent.com"
+    client_secret: "your-client-secret"
 ```
 
 ## Search syntax

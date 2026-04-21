@@ -1,12 +1,14 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hjiang/mnemosyne/internal/accounts"
@@ -17,35 +19,58 @@ import (
 	"github.com/hjiang/mnemosyne/internal/scheduler"
 )
 
-func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
-	userID := auth.UserIDFromContext(r.Context())
+// renderAccountsPage renders accounts.html with a consistent set of fields
+// (account list, OAuth button state) so all code paths show the same UI.
+func (s *Server) renderAccountsPage(w http.ResponseWriter, r *http.Request, userID int64, errMsg string) {
+	if s.accounts == nil {
+		http.Error(w, "IMAP accounts not configured", http.StatusNotFound)
+		return
+	}
 	accts, err := s.accounts.List(userID)
 	if err != nil {
+		log.Printf("listing accounts for user %d: %v", userID, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Accounts": accts})
+	data := map[string]any{
+		"Title":              "Accounts",
+		"Accounts":           accts,
+		"OAuthGoogleEnabled": s.tokenMgr != nil,
+	}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	}
+	s.render(w, r, "accounts.html", data)
+}
+
+func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	s.renderAccountsPage(w, r, userID, "")
 }
 
 func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
+	if s.accounts == nil {
+		http.Error(w, "IMAP accounts not configured", http.StatusNotFound)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	userID := auth.UserIDFromContext(r.Context())
 
 	in, formErr := parseAccountForm(r)
 	if formErr != "" {
-		s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Error": formErr})
+		s.renderAccountsPage(w, r, userID, formErr)
 		return
 	}
 
 	acct, err := s.accounts.Create(userID, in.Label, in.Host, in.Port, in.Username, in.Password, in.UseTLS,
 		in.ProxyHost, in.ProxyPort, in.ProxyUsername, in.ProxyPassword)
 	if err != nil {
-		s.render(w, r, "accounts.html", map[string]any{"Title": "Accounts", "Error": "Failed to create account."})
+		s.renderAccountsPage(w, r, userID, "Failed to create account.")
 		return
 	}
 
-	// Auto-discover folders from the IMAP server.
-	go s.discoverFolders(acct)
+	// Auto-discover folders from the IMAP server (outlives request context).
+	go s.discoverFolders(acct) //nolint:gosec // G118 - intentionally outlives request
 
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }
@@ -321,23 +346,44 @@ func (s *Server) discoverFolders(acct *accounts.Account) {
 		}
 	}
 
-	client, err := imapwrap.Dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
+	var client interface {
+		ListFolders() ([]string, error)
+		Close() error
+	}
+	var err error
+
+	if acct.IsOAuth() {
+		if s.tokenMgr == nil {
+			log.Printf("folder discovery for account %d: OAuth account but OAuth not configured", acct.ID) //nolint:gosec // intentional ID logging
+			return
+		}
+		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer refreshCancel()
+		token, tokenErr := s.tokenMgr.EnsureFreshToken(refreshCtx, acct.ID, acct.UserID)
+		if tokenErr != nil {
+			log.Printf("folder discovery for account %d: token refresh failed: %v", acct.ID, tokenErr) //nolint:gosec
+			return
+		}
+		client, err = imapwrap.DialOAuth(addr, acct.Username, token, acct.UseTLS, proxyConf)
+	} else {
+		client, err = imapwrap.Dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
+	}
 	if err != nil {
-		log.Printf("folder discovery for account %d: connect failed: %q", acct.ID, err) //nolint:gosec // accountID is int, err is quoted
+		log.Printf("folder discovery for account %d: connect failed: %v", acct.ID, err) //nolint:gosec
 		return
 	}
 	defer client.Close() //nolint:errcheck
 
 	names, err := client.ListFolders()
 	if err != nil {
-		log.Printf("folder discovery for account %d: list failed: %q", acct.ID, err) //nolint:gosec // accountID is int, err is quoted
+		log.Printf("folder discovery for account %d: list failed: %v", acct.ID, err) //nolint:gosec
 		return
 	}
 
 	for _, name := range names {
 		if _, err := s.accounts.CreateFolder(acct.ID, name); err != nil {
-			log.Printf("folder discovery for account %d: creating %q: %q", acct.ID, name, err) //nolint:gosec // all values quoted
+			log.Printf("folder discovery for account %d: creating %q: %v", acct.ID, name, err) //nolint:gosec
 		}
 	}
-	log.Printf("folder discovery for account %d: found %d folders", acct.ID, len(names)) //nolint:gosec // no untrusted input
+	log.Printf("folder discovery for account %d: found %d folders", acct.ID, len(names)) //nolint:gosec
 }

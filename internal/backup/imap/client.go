@@ -8,13 +8,16 @@ import (
 	"mime"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	goiap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/charset"
+	"github.com/emersion/go-sasl"
 	"golang.org/x/net/proxy"
+
+	goiap "github.com/emersion/go-imap/v2"
 )
 
 // FolderInfo contains metadata returned by SELECT.
@@ -120,6 +123,57 @@ func dialViaProxy(addr string, useTLS bool, pc *ProxyConfig, opts *imapclient.Op
 	}
 
 	return imapclient.New(conn, opts), nil
+}
+
+// DialOAuth connects to an IMAP server and authenticates using OAUTHBEARER.
+// TLS is required — sending bearer tokens over plaintext is a credential
+// disclosure risk. Set useTLS to true for implicit TLS (port 993).
+// If proxyConf is non-nil and has a non-empty Host, the connection is routed
+// through a SOCKS5 proxy.
+func DialOAuth(addr, username, accessToken string, useTLS bool, proxyConf *ProxyConfig) (*Client, error) {
+	if !useTLS {
+		return nil, fmt.Errorf("OAuth requires TLS; refusing plaintext connection to %s", addr)
+	}
+
+	opts := &imapclient.Options{
+		WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
+	}
+
+	var raw *imapclient.Client
+	var err error
+
+	switch {
+	case proxyConf != nil && proxyConf.Host != "":
+		raw, err = dialViaProxy(addr, useTLS, proxyConf, opts)
+	default:
+		raw, err = imapclient.DialTLS(addr, opts)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("connecting to %s: %w", addr, err)
+	}
+
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("parsing address %q: %w", addr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("parsing port in %q: %w", addr, err)
+	}
+	saslClient := sasl.NewOAuthBearerClient(&sasl.OAuthBearerOptions{
+		Username: username,
+		Token:    accessToken,
+		Host:     host,
+		Port:     port,
+	})
+	if err := raw.Authenticate(saslClient); err != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("oauth authenticate: %w", err)
+	}
+
+	return &Client{raw: raw}, nil
 }
 
 // Close logs out and closes the connection.

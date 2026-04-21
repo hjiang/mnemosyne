@@ -495,3 +495,79 @@ func TestUpdate_WithProxy(t *testing.T) {
 		t.Errorf("ProxyPassword = %q, want empty", got.ProxyPassword)
 	}
 }
+
+func TestIsOAuth_UnrecognizedAuthType(t *testing.T) {
+	// An account with a typo'd or unknown auth_type should NOT be treated as OAuth.
+	a := &Account{AuthType: "oauth_github"}
+	if a.IsOAuth() {
+		t.Errorf("IsOAuth() = true for unrecognized auth_type %q, want false", a.AuthType)
+	}
+}
+
+func TestIsOAuth_RecognizedTypes(t *testing.T) {
+	tests := []struct {
+		authType string
+		want     bool
+	}{
+		{"", false},
+		{"password", false},
+		{"oauth_google", true},
+	}
+	for _, tt := range tests {
+		a := &Account{AuthType: tt.authType}
+		if got := a.IsOAuth(); got != tt.want {
+			t.Errorf("IsOAuth() for %q = %v, want %v", tt.authType, got, tt.want)
+		}
+	}
+}
+
+func TestCreateOAuth_RejectsInvalidAuthType(t *testing.T) {
+	env := newTestEnv(t)
+
+	_, err := env.repo.CreateOAuth(env.userA, "Bad", "user@example.com", "oauth_github", "refresh", "access", 9999)
+	if err == nil {
+		t.Fatal("expected error for unsupported auth type")
+	}
+	if !errors.Is(err, ErrUnsupportedAuthType) {
+		t.Errorf("error = %v, want ErrUnsupportedAuthType", err)
+	}
+}
+
+func TestCreateOAuth_AcceptsValidAuthType(t *testing.T) {
+	env := newTestEnv(t)
+
+	acct, err := env.repo.CreateOAuth(env.userA, "Google", "user@example.com", "oauth_google", "refresh", "access", 9999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.AuthType != "oauth_google" {
+		t.Errorf("AuthType = %q, want %q", acct.AuthType, "oauth_google")
+	}
+}
+
+func TestList_OmitsOAuthTokens(t *testing.T) {
+	env := newTestEnv(t)
+
+	_, err := env.repo.CreateOAuth(env.userA, "Google", "user@example.com", "oauth_google", "secret-refresh", "secret-access", 9999)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	accts, err := env.repo.List(env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accts))
+	}
+	if accts[0].RefreshToken != "" {
+		t.Errorf("List should not decrypt RefreshToken, got %q", accts[0].RefreshToken)
+	}
+	if accts[0].AccessToken != "" {
+		t.Errorf("List should not decrypt AccessToken, got %q", accts[0].AccessToken)
+	}
+	// AuthType and other metadata should still be present.
+	if accts[0].AuthType != "oauth_google" {
+		t.Errorf("AuthType = %q, want %q", accts[0].AuthType, "oauth_google")
+	}
+}
