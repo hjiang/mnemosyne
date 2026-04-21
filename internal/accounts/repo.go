@@ -226,7 +226,10 @@ func (r *Repo) CreateOAuth(userID int64, label, username, authType, refreshToken
 		return nil, fmt.Errorf("inserting oauth account: %w", err)
 	}
 
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("getting oauth account insert id: %w", err)
+	}
 	exp := tokenExpiry
 	return &Account{
 		ID: id, UserID: userID, Label: label,

@@ -49,6 +49,10 @@ func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
+	if s.accounts == nil {
+		http.Error(w, "IMAP accounts not configured", http.StatusNotFound)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	userID := auth.UserIDFromContext(r.Context())
 
