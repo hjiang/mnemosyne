@@ -1509,7 +1509,7 @@ func TestRun_OAuthTokenRefreshTimeout(t *testing.T) {
 		close(done)
 	}()
 
-	// The run should complete quickly (the 500ms token refresh timeout
+	// The run should complete quickly (the 10ms token refresh timeout
 	// should kick in) rather than blocking forever.
 	select {
 	case <-done:
