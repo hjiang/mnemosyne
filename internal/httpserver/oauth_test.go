@@ -280,22 +280,28 @@ func TestOAuthCallback_SuccessPath(t *testing.T) {
 	}
 
 	// Verify the OAuth account was created.
+	// Use List to find the account ID, then GetByID to check tokens
+	// (List intentionally skips token decryption).
 	accts, err := env.accounts.List(env.userID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	var acctID int64
 	for _, a := range accts {
 		if a.Username == "user@example.com" && a.AuthType == "oauth_google" {
-			found = true
-			if a.RefreshToken != "test-refresh-token" {
-				t.Errorf("RefreshToken = %q, want %q", a.RefreshToken, "test-refresh-token")
-			}
+			acctID = a.ID
 			break
 		}
 	}
-	if !found {
-		t.Error("OAuth account not found after successful callback")
+	if acctID == 0 {
+		t.Fatal("OAuth account not found after successful callback")
+	}
+	acct, err := env.accounts.GetByID(acctID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.RefreshToken != "test-refresh-token" {
+		t.Errorf("RefreshToken = %q, want %q", acct.RefreshToken, "test-refresh-token")
 	}
 }
 

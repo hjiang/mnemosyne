@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -140,7 +141,8 @@ func fetchGoogleEmail(ctx context.Context, accessToken string) (string, error) {
 		Email         string `json:"email"`
 		EmailVerified bool   `json:"email_verified"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	// Limit response body to 1 MB to avoid memory spikes from unexpected responses.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&info); err != nil {
 		return "", fmt.Errorf("decoding userinfo: %w", err)
 	}
 	if info.Email == "" {

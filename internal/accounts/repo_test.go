@@ -544,3 +544,30 @@ func TestCreateOAuth_AcceptsValidAuthType(t *testing.T) {
 		t.Errorf("AuthType = %q, want %q", acct.AuthType, "oauth_google")
 	}
 }
+
+func TestList_OmitsOAuthTokens(t *testing.T) {
+	env := newTestEnv(t)
+
+	_, err := env.repo.CreateOAuth(env.userA, "Google", "user@example.com", "oauth_google", "secret-refresh", "secret-access", 9999)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	accts, err := env.repo.List(env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accts))
+	}
+	if accts[0].RefreshToken != "" {
+		t.Errorf("List should not decrypt RefreshToken, got %q", accts[0].RefreshToken)
+	}
+	if accts[0].AccessToken != "" {
+		t.Errorf("List should not decrypt AccessToken, got %q", accts[0].AccessToken)
+	}
+	// AuthType and other metadata should still be present.
+	if accts[0].AuthType != "oauth_google" {
+		t.Errorf("AuthType = %q, want %q", accts[0].AuthType, "oauth_google")
+	}
+}

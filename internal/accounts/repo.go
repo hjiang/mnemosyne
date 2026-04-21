@@ -187,9 +187,9 @@ func (r *Repo) List(userID int64) ([]*Account, error) {
 			}
 			a.ProxyPassword = string(proxyPwd)
 		}
-		if err := r.decryptTokens(&a, encRefresh, encAccess); err != nil {
-			return nil, err
-		}
+		// Intentionally skip decryptTokens — List is used by UI handlers
+		// that don't need OAuth secrets. Tokens are decrypted in GetByID
+		// for the orchestrator/token-refresh path only.
 		accounts = append(accounts, &a)
 	}
 	return accounts, rows.Err()
