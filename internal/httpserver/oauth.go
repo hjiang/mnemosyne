@@ -79,7 +79,7 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch the user's email from Google's userinfo endpoint.
-	email, err := fetchGoogleEmail(r.Context(), tok.AccessToken)
+	email, err := s.fetchEmail(r.Context(), tok.AccessToken)
 	if err != nil {
 		log.Printf("oauth fetch email: %v", err)
 		s.renderOAuthError(w, r, userID, "Failed to determine account email.")

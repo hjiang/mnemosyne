@@ -2,6 +2,7 @@
 package httpserver
 
 import (
+	"context"
 	"embed"
 	"encoding/hex"
 	"html/template"
@@ -38,6 +39,10 @@ type Server struct {
 	search    *search.Executor
 	blobs     *blobs.Store
 	tokenMgr  *oauth.TokenManager
+
+	// fetchEmail fetches the user's email from the OAuth provider.
+	// Defaults to fetchGoogleEmail; overridable in tests.
+	fetchEmail func(ctx context.Context, accessToken string) (string, error)
 }
 
 // New creates an HTTP server with all routes wired.
@@ -71,17 +76,18 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 	}
 
 	s := &Server{
-		router:    chi.NewRouter(),
-		templates: templates,
-		users:     userRepo,
-		sessions:  sessions,
-		accounts:  acctRepo,
-		backup:    orch,
-		queue:     jobQueue,
-		messages:  msgRepo,
-		search:    searchExec,
-		blobs:     blobStore,
-		tokenMgr:  tokenMgr,
+		router:     chi.NewRouter(),
+		templates:  templates,
+		users:      userRepo,
+		sessions:   sessions,
+		accounts:   acctRepo,
+		backup:     orch,
+		queue:      jobQueue,
+		messages:   msgRepo,
+		search:     searchExec,
+		blobs:      blobStore,
+		tokenMgr:   tokenMgr,
+		fetchEmail: fetchGoogleEmail,
 	}
 
 	s.router.Handle("/static/*", http.FileServer(http.FS(staticFS)))

@@ -1,13 +1,17 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/hjiang/mnemosyne/internal/accounts"
 	"github.com/hjiang/mnemosyne/internal/auth"
@@ -223,6 +227,75 @@ func TestOAuthCallback_MissingCode(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "missing authorization code") {
 		t.Errorf("body = %q, want missing code error", rr.Body.String())
+	}
+}
+
+// Test: full OAuth callback success path — exchanges code, fetches email, creates account, redirects.
+func TestOAuthCallback_SuccessPath(t *testing.T) {
+	env := newOAuthTestEnv(t, true)
+
+	// Point the token manager's oauth2 config at a fake token endpoint.
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "test-access-token",
+			"refresh_token": "test-refresh-token",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	// Override the token endpoint on the token manager's internal config.
+	env.tokenMgr.SetGoogleEndpoint(oauth2.Endpoint{
+		TokenURL: tokenSrv.URL + "/token",
+	})
+
+	// Override fetchEmail to return a fake email without hitting Google.
+	env.server.fetchEmail = func(_ context.Context, accessToken string) (string, error) {
+		if accessToken != "test-access-token" {
+			t.Errorf("fetchEmail got token %q, want %q", accessToken, "test-access-token")
+		}
+		return "user@example.com", nil
+	}
+
+	// Generate a valid state for the authenticated user.
+	_, state, err := env.tokenMgr.AuthCodeURL(env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/oauth/google/callback?code=auth-code-123&state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: "mnemosyne_session", Value: env.cookie})
+	rr := httptest.NewRecorder()
+	env.server.ServeHTTP(rr, req)
+
+	// Should redirect to the new account's folders page.
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want %d; body: %s", rr.Code, http.StatusSeeOther, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/accounts/") || !strings.Contains(loc, "/folders") {
+		t.Errorf("Location = %q, want /accounts/<id>/folders", loc)
+	}
+
+	// Verify the OAuth account was created.
+	accts, err := env.accounts.List(env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range accts {
+		if a.Username == "user@example.com" && a.AuthType == "oauth_google" {
+			found = true
+			if a.RefreshToken != "test-refresh-token" {
+				t.Errorf("RefreshToken = %q, want %q", a.RefreshToken, "test-refresh-token")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("OAuth account not found after successful callback")
 	}
 }
 

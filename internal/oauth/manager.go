@@ -65,6 +65,14 @@ func NewTokenManager(cfg config.OAuthConfig, baseURL string, acctRepo *accounts.
 // unbounded memory growth from abandoned authorization flows.
 const maxPendingStates = 100
 
+// SetGoogleEndpoint overrides the OAuth2 endpoint (token URL, auth URL).
+// This is intended for testing only, to point at a fake token server.
+func (tm *TokenManager) SetGoogleEndpoint(endpoint oauth2.Endpoint) {
+	if tm.googleCfg != nil {
+		tm.googleCfg.Endpoint = endpoint
+	}
+}
+
 // AuthCodeURL generates an authorization URL and a random state parameter.
 // The state is stored in memory and expires after 10 minutes.
 func (tm *TokenManager) AuthCodeURL(userID int64) (string, string, error) {
