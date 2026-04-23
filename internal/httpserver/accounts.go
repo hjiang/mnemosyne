@@ -85,7 +85,10 @@ func (s *Server) accountFolders(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.renderFoldersPage(w, r, acct, "")
+}
 
+func (s *Server) renderFoldersPage(w http.ResponseWriter, r *http.Request, acct *accounts.Account, errMsg string) {
 	folders, err := s.accounts.ListActiveFolders(acct.ID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -110,11 +113,15 @@ func (s *Server) accountFolders(w http.ResponseWriter, r *http.Request) {
 		views[i] = fv
 	}
 
-	s.render(w, r, "folders.html", map[string]any{
+	data := map[string]any{
 		"Title":   fmt.Sprintf("Folders — %s", acct.Label),
 		"Account": acct,
 		"Folders": views,
-	})
+	}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	}
+	s.render(w, r, "folders.html", data)
 }
 
 func (s *Server) folderToggle(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +387,7 @@ func (s *Server) discoverFolders(acct *accounts.Account) error {
 
 	for _, name := range names {
 		if _, err := s.accounts.CreateFolder(acct.ID, name); err != nil {
-			log.Printf("folder discovery for account %d: creating %q: %v", acct.ID, name, err) //nolint:gosec
+			return fmt.Errorf("creating folder %q: %w", name, err)
 		}
 	}
 
@@ -399,6 +406,8 @@ func (s *Server) folderRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.discoverFolders(acct); err != nil {
 		log.Printf("folder refresh for account %d: %v", acct.ID, err) //nolint:gosec
+		s.renderFoldersPage(w, r, acct, fmt.Sprintf("Folder refresh failed: %v", err))
+		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }

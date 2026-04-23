@@ -7,6 +7,8 @@
         </form>
     </div>
 
+    {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+
     <article class="card" style="padding:0;overflow:hidden">
         <ul class="folder-list">
         {{range .Folders}}

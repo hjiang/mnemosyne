@@ -284,25 +284,25 @@ func TestAccounts_Update_KeepsPassword(t *testing.T) {
 }
 
 // isolation — user A cannot update user B's account
-func TestAccounts_FolderRefresh_Redirects(t *testing.T) {
+func TestAccounts_FolderRefresh_ShowsError(t *testing.T) {
 	env := newAcctTestEnv(t)
 
 	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
 	env.accounts.CreateFolder(acct.ID, "INBOX") //nolint:errcheck,gosec
 
-	// The IMAP server is unreachable, but the handler should still redirect.
+	// The IMAP server is unreachable, so the handler should render the
+	// folders page with an error message instead of redirecting.
 	rr := env.doRequest(t, "POST",
 		fmt.Sprintf("/accounts/%d/folders/refresh", acct.ID),
 		env.cookieA,
 		nil,
 	)
-	if rr.Code != http.StatusSeeOther {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusSeeOther)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
-	loc := rr.Header().Get("Location")
-	want := fmt.Sprintf("/accounts/%d/folders", acct.ID)
-	if loc != want {
-		t.Errorf("Location = %q, want %q", loc, want)
+	body := rr.Body.String()
+	if !strings.Contains(body, "Folder refresh failed") {
+		t.Error("expected error message in response body")
 	}
 }
 
