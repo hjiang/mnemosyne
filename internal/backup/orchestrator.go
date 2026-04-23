@@ -60,6 +60,8 @@ type IMAPClient interface {
 // fetchBatchSize is the number of message bodies fetched per IMAP FETCH command.
 const fetchBatchSize = 50
 
+const defaultExpungeBatchSize = 50
+
 // connError signals that syncFolder stopped due to a connection-level failure.
 // Run uses this to decide whether reconnecting and retrying is worthwhile.
 type connError struct{ err error }
@@ -79,6 +81,7 @@ type Orchestrator struct {
 	blobs               *blobs.Store
 	tokenRefresh        TokenRefresher
 	tokenRefreshTimeout time.Duration                                                                               // 0 = use default
+	expungeBatchSize    int                                                                                          // 0 = use default
 	dialFunc            func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
 	dialOAuthFunc       func(addr, user, token string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.DialOAuth
 }
@@ -254,6 +257,11 @@ func (o *Orchestrator) syncFolder(
 	result *Result,
 	envelopes *[]imapwrap.Envelope, // in/out: accumulated envelopes across retries
 ) error {
+	ebSize := o.expungeBatchSize
+	if ebSize == 0 {
+		ebSize = defaultExpungeBatchSize
+	}
+
 	info, err := client.SelectFolder(folder.Name)
 	if err != nil {
 		return fmt.Errorf("selecting: %w", err)
@@ -339,19 +347,27 @@ func (o *Orchestrator) syncFolder(
 	}
 
 	// Mark-delete previously-backed-up messages that fall in the expunge set.
-	var didDelete bool
+	var deletesSinceExpunge int
 	for uid := range expungeSet {
-		if backedUp[uid] {
-			if err := client.MarkDeleted([]uint32{uid}); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("mark deleted UID %d: %w", uid, err))
-			} else {
-				didDelete = true
+		if !backedUp[uid] {
+			continue
+		}
+		if err := client.MarkDeleted([]uint32{uid}); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("mark deleted UID %d: %w", uid, err))
+			break
+		}
+		deletesSinceExpunge++
+		if deletesSinceExpunge >= ebSize {
+			if err := client.Expunge(); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
+				break
 			}
+			deletesSinceExpunge = 0
 		}
 	}
 
 	if len(envs) == 0 {
-		if didDelete {
+		if deletesSinceExpunge > 0 {
 			if err := client.Expunge(); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
 			}
@@ -419,7 +435,13 @@ func (o *Orchestrator) syncFolder(
 				if err := client.MarkDeleted([]uint32{uid}); err != nil {
 					result.Errors = append(result.Errors, fmt.Errorf("mark deleted UID %d: %w", uid, err))
 				} else {
-					didDelete = true
+					deletesSinceExpunge++
+					if deletesSinceExpunge >= ebSize {
+						if err := client.Expunge(); err != nil {
+							result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
+						}
+						deletesSinceExpunge = 0
+					}
 				}
 			}
 		}
@@ -437,7 +459,7 @@ func (o *Orchestrator) syncFolder(
 		_ = o.accounts.SetLastSeenUID(folder.ID, maxUID)
 	}
 
-	if didDelete {
+	if deletesSinceExpunge > 0 {
 		if err := client.Expunge(); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
 		}

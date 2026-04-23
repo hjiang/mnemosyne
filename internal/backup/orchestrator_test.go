@@ -1522,3 +1522,137 @@ func TestRun_OAuthTokenRefreshTimeout(t *testing.T) {
 		t.Error("expected EnsureFreshToken to be called")
 	}
 }
+
+// expungeSpyClient wraps an IMAPClient and counts Expunge calls.
+type expungeSpyClient struct {
+	IMAPClient
+	expungeCalls int
+}
+
+func (s *expungeSpyClient) Expunge() error {
+	s.expungeCalls++
+	return s.IMAPClient.Expunge()
+}
+
+func TestOrchestrator_BatchedExpunge(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+
+	// Use a small batch size so we don't need hundreds of messages.
+	env.orchestrator.expungeBatchSize = 3
+
+	// Seed 7 messages with distinct dates.
+	for i := 1; i <= 7; i++ {
+		raw := fmt.Sprintf(
+			"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: msg %d\r\nMessage-ID: <batch%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+
+	// Keep newest 1 → 6 messages should be expunged.
+	// With batchSize=3, expect ceil(6/3)=2 batch expunges + 0 remainder = 2 total.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":1}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inject spy client via dialFunc.
+	var spy *expungeSpyClient
+	env.orchestrator.dialFunc = func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) {
+		inner, err := imapwrap.Dial(addr, user, pass, tls, proxyConf)
+		if err != nil {
+			return nil, err
+		}
+		spy = &expungeSpyClient{IMAPClient: inner}
+		return spy, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NewMessages != 7 {
+		t.Fatalf("NewMessages = %d, want 7", result.NewMessages)
+	}
+
+	// With 6 deletions and batchSize=3, we expect at least 2 Expunge calls
+	// (not 1 monolithic call at the end).
+	if spy == nil {
+		t.Fatal("spy client was not injected")
+	}
+	if spy.expungeCalls < 2 {
+		t.Errorf("expungeCalls = %d, want >= 2 (batched expunge not working)", spy.expungeCalls)
+	}
+
+	// Verify the correct number of messages remain on the server.
+	client := connectTestIMAP(t, env.imapSrv)
+	info, err := client.SelectFolder("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.NumMessages != 1 {
+		t.Errorf("IMAP NumMessages = %d, want 1 after retention", info.NumMessages)
+	}
+}
+
+func TestOrchestrator_BatchedExpunge_PreviouslyBackedUp(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+
+	env.orchestrator.expungeBatchSize = 3
+
+	// Seed 7 messages.
+	for i := 1; i <= 7; i++ {
+		raw := fmt.Sprintf(
+			"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: msg %d\r\nMessage-ID: <bpb%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+
+	// First run: "all" policy, back up everything.
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NewMessages != 7 {
+		t.Fatalf("first run: NewMessages = %d, want 7", result.NewMessages)
+	}
+
+	// Tighten policy: keep newest 1 → 6 previously-backed-up messages to delete.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":1}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inject spy for the second run.
+	var spy *expungeSpyClient
+	env.orchestrator.dialFunc = func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) {
+		inner, err := imapwrap.Dial(addr, user, pass, tls, proxyConf)
+		if err != nil {
+			return nil, err
+		}
+		spy = &expungeSpyClient{IMAPClient: inner}
+		return spy, nil
+	}
+
+	// Second run: no new messages, retention deletes previously backed up.
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if spy == nil {
+		t.Fatal("spy client was not injected")
+	}
+	if spy.expungeCalls < 2 {
+		t.Errorf("expungeCalls = %d, want >= 2 (batched expunge not working for previously backed up)", spy.expungeCalls)
+	}
+
+	client := connectTestIMAP(t, env.imapSrv)
+	info, err := client.SelectFolder("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.NumMessages != 1 {
+		t.Errorf("IMAP NumMessages = %d, want 1", info.NumMessages)
+	}
+}
