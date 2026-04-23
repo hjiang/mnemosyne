@@ -2,6 +2,9 @@
     <div class="page-header">
         <h2>Folders for {{.Account.Label}}</h2>
         <p>Toggle which folders to include in backups and configure retention policies</p>
+        <form method="POST" action="/accounts/{{.Account.ID}}/folders/refresh" style="display:inline">
+            <button type="submit">Refresh folders</button>
+        </form>
     </div>
 
     <article class="card" style="padding:0;overflow:hidden">

@@ -99,8 +99,12 @@ func (s *Server) oauthGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Discover folders in the background using OAuth (outlives request context).
-	go s.discoverFolders(acct) //nolint:gosec // G118 - intentionally outlives request
+	// Discover folders synchronously. For OAuth accounts the token exchange
+	// already validated credentials, so a discovery failure (e.g. network
+	// issue) is non-fatal — the user can refresh folders later.
+	if err := s.discoverFolders(acct); err != nil {
+		log.Printf("folder discovery for OAuth account %d: %v", acct.ID, err) //nolint:gosec
+	}
 
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }

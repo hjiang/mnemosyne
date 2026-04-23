@@ -145,7 +145,7 @@ func (o *Orchestrator) connectAccount(acct *accounts.Account, addr string) (IMAP
 }
 
 func (o *Orchestrator) reloadFolder(accountID, folderID int64) *accounts.Folder {
-	folders, err := o.accounts.ListFolders(accountID)
+	folders, err := o.accounts.ListActiveFolders(accountID)
 	if err != nil {
 		return nil
 	}
@@ -172,7 +172,7 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 	}
 	defer func() { _ = client.Close() }()
 
-	folders, err := o.accounts.ListFolders(accountID)
+	folders, err := o.accounts.ListActiveFolders(accountID)
 	if err != nil {
 		return nil, fmt.Errorf("listing folders: %w", err)
 	}

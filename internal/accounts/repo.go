@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
@@ -56,6 +57,7 @@ type Folder struct {
 	UIDValidity *uint32
 	LastSeenUID uint32
 	PolicyJSON  string
+	OnServer    bool
 }
 
 // Repo manages IMAP accounts and folders in SQLite.
@@ -276,26 +278,37 @@ func (r *Repo) decryptTokens(a *Account, encRefresh, encAccess []byte) error {
 }
 
 // CreateFolder inserts a folder for the given account.
+// If the folder already exists, it is marked as on_server again.
 func (r *Repo) CreateFolder(accountID int64, name string) (*Folder, error) {
 	res, err := r.db.Exec(
 		`INSERT INTO imap_folders (account_id, name) VALUES (?, ?)
-		 ON CONFLICT(account_id, name) DO NOTHING`,
+		 ON CONFLICT(account_id, name) DO UPDATE SET on_server = 1`,
 		accountID, name,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("inserting folder: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	return &Folder{ID: id, AccountID: accountID, Name: name, PolicyJSON: `{"leave_on_server":"all"}`}, nil
+	return &Folder{ID: id, AccountID: accountID, Name: name, OnServer: true, PolicyJSON: `{"leave_on_server":"all"}`}, nil
 }
 
-// ListFolders returns all folders for an account.
+// ListFolders returns all folders for an account, including those no longer on the server.
 func (r *Repo) ListFolders(accountID int64) ([]*Folder, error) {
-	rows, err := r.db.Query(
-		`SELECT id, account_id, name, enabled, uid_validity, last_seen_uid, policy_json
-		 FROM imap_folders WHERE account_id = ?`,
-		accountID,
-	)
+	return r.listFolders(accountID, false)
+}
+
+// ListActiveFolders returns only folders that currently exist on the IMAP server.
+func (r *Repo) ListActiveFolders(accountID int64) ([]*Folder, error) {
+	return r.listFolders(accountID, true)
+}
+
+func (r *Repo) listFolders(accountID int64, activeOnly bool) ([]*Folder, error) {
+	query := `SELECT id, account_id, name, enabled, uid_validity, last_seen_uid, policy_json, on_server
+		 FROM imap_folders WHERE account_id = ?`
+	if activeOnly {
+		query += ` AND on_server = 1`
+	}
+	rows, err := r.db.Query(query, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("listing folders: %w", err)
 	}
@@ -304,7 +317,7 @@ func (r *Repo) ListFolders(accountID int64) ([]*Folder, error) {
 	var folders []*Folder
 	for rows.Next() {
 		var f Folder
-		if err := rows.Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON); err != nil {
+		if err := rows.Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON, &f.OnServer); err != nil {
 			return nil, fmt.Errorf("scanning folder: %w", err)
 		}
 		folders = append(folders, &f)
@@ -312,17 +325,51 @@ func (r *Repo) ListFolders(accountID int64) ([]*Folder, error) {
 	return folders, rows.Err()
 }
 
+// MarkFoldersOffServer sets on_server = 0 for any folder in the given account
+// whose name is not in the provided list of server-side folder names.
+func (r *Repo) MarkFoldersOffServer(accountID int64, serverNames []string) error {
+	if len(serverNames) == 0 {
+		_, err := r.db.Exec(
+			`UPDATE imap_folders SET on_server = 0 WHERE account_id = ?`,
+			accountID,
+		)
+		if err != nil {
+			return fmt.Errorf("marking all folders off-server: %w", err)
+		}
+		return nil
+	}
+
+	placeholders := strings.Repeat("?,", len(serverNames))
+	placeholders = placeholders[:len(placeholders)-1] // trim trailing comma
+
+	args := make([]any, 0, len(serverNames)+1)
+	args = append(args, accountID)
+	for _, n := range serverNames {
+		args = append(args, n)
+	}
+
+	//nolint:gosec // SQL placeholders are generated, all values are parameterized
+	_, err := r.db.Exec(
+		`UPDATE imap_folders SET on_server = 0 WHERE account_id = ? AND name NOT IN (`+placeholders+`)`,
+		args...,
+	)
+	if err != nil {
+		return fmt.Errorf("marking folders off-server: %w", err)
+	}
+	return nil
+}
+
 // GetFolderByID retrieves a folder and verifies it belongs to the given user via the account.
 // enforces user isolation
 func (r *Repo) GetFolderByID(folderID, userID int64) (*Folder, error) {
 	var f Folder
 	err := r.db.QueryRow(
-		`SELECT f.id, f.account_id, f.name, f.enabled, f.uid_validity, f.last_seen_uid, f.policy_json
+		`SELECT f.id, f.account_id, f.name, f.enabled, f.uid_validity, f.last_seen_uid, f.policy_json, f.on_server
 		 FROM imap_folders f
 		 JOIN imap_accounts a ON a.id = f.account_id
 		 WHERE f.id = ? AND a.user_id = ?`,
 		folderID, userID,
-	).Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON)
+	).Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON, &f.OnServer)
 	if err != nil {
 		return nil, fmt.Errorf("getting folder by id: %w", err)
 	}
@@ -401,6 +448,20 @@ func (r *Repo) Update(id, userID int64, label, host string, port int, username, 
 	return nil
 }
 
+// Delete removes an IMAP account and all its folders (via CASCADE).
+// enforces user isolation
+func (r *Repo) Delete(id, userID int64) error {
+	res, err := r.db.Exec("DELETE FROM imap_accounts WHERE id = ? AND user_id = ?", id, userID)
+	if err != nil {
+		return fmt.Errorf("deleting account: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetLastSyncAt records when the account was last synced.
 func (r *Repo) SetLastSyncAt(accountID int64, ts int64) error {
 	_, err := r.db.Exec("UPDATE imap_accounts SET last_sync_at = ? WHERE id = ?", ts, accountID)
@@ -423,7 +484,7 @@ func (r *Repo) ListAllEnabled() ([]EnabledAccount, error) {
 		`SELECT DISTINCT a.id, a.user_id
 		 FROM imap_accounts a
 		 JOIN imap_folders f ON f.account_id = a.id
-		 WHERE f.enabled = 1`)
+		 WHERE f.enabled = 1 AND f.on_server = 1`)
 	if err != nil {
 		return nil, fmt.Errorf("listing enabled accounts: %w", err)
 	}

@@ -1,0 +1,1 @@
+ALTER TABLE imap_folders ADD COLUMN on_server INTEGER NOT NULL DEFAULT 1;

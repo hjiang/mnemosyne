@@ -69,8 +69,13 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-discover folders from the IMAP server (outlives request context).
-	go s.discoverFolders(acct) //nolint:gosec // G118 - intentionally outlives request
+	// Discover folders synchronously to validate IMAP credentials.
+	// On failure, roll back the account and show the error.
+	if err := s.discoverFolders(acct); err != nil {
+		_ = s.accounts.Delete(acct.ID, userID)
+		s.renderAccountsPage(w, r, userID, fmt.Sprintf("IMAP connection failed: %v", err))
+		return
+	}
 
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }
@@ -81,10 +86,7 @@ func (s *Server) accountFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sync folder list from the IMAP server (creates new folders, preserves existing).
-	s.discoverFolders(acct)
-
-	folders, err := s.accounts.ListFolders(acct.ID)
+	folders, err := s.accounts.ListActiveFolders(acct.ID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -333,7 +335,7 @@ func parseAccountForm(r *http.Request) (*accountFormInput, string) {
 	return in, ""
 }
 
-func (s *Server) discoverFolders(acct *accounts.Account) {
+func (s *Server) discoverFolders(acct *accounts.Account) error {
 	addr := fmt.Sprintf("%s:%d", acct.Host, acct.Port)
 
 	var proxyConf *imapwrap.ProxyConfig
@@ -354,30 +356,26 @@ func (s *Server) discoverFolders(acct *accounts.Account) {
 
 	if acct.IsOAuth() {
 		if s.tokenMgr == nil {
-			log.Printf("folder discovery for account %d: OAuth account but OAuth not configured", acct.ID) //nolint:gosec // intentional ID logging
-			return
+			return fmt.Errorf("OAuth account but OAuth not configured")
 		}
 		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer refreshCancel()
 		token, tokenErr := s.tokenMgr.EnsureFreshToken(refreshCtx, acct.ID, acct.UserID)
 		if tokenErr != nil {
-			log.Printf("folder discovery for account %d: token refresh failed: %v", acct.ID, tokenErr) //nolint:gosec
-			return
+			return fmt.Errorf("token refresh: %w", tokenErr)
 		}
 		client, err = imapwrap.DialOAuth(addr, acct.Username, token, acct.UseTLS, proxyConf)
 	} else {
 		client, err = imapwrap.Dial(addr, acct.Username, acct.Password, acct.UseTLS, proxyConf)
 	}
 	if err != nil {
-		log.Printf("folder discovery for account %d: connect failed: %v", acct.ID, err) //nolint:gosec
-		return
+		return fmt.Errorf("connect: %w", err)
 	}
 	defer client.Close() //nolint:errcheck
 
 	names, err := client.ListFolders()
 	if err != nil {
-		log.Printf("folder discovery for account %d: list failed: %v", acct.ID, err) //nolint:gosec
-		return
+		return fmt.Errorf("listing folders: %w", err)
 	}
 
 	for _, name := range names {
@@ -385,5 +383,22 @@ func (s *Server) discoverFolders(acct *accounts.Account) {
 			log.Printf("folder discovery for account %d: creating %q: %v", acct.ID, name, err) //nolint:gosec
 		}
 	}
+
+	if err := s.accounts.MarkFoldersOffServer(acct.ID, names); err != nil {
+		return fmt.Errorf("marking off-server folders: %w", err)
+	}
+
 	log.Printf("folder discovery for account %d: found %d folders", acct.ID, len(names)) //nolint:gosec
+	return nil
+}
+
+func (s *Server) folderRefresh(w http.ResponseWriter, r *http.Request) {
+	acct, _, ok := s.requireAccount(w, r)
+	if !ok {
+		return
+	}
+	if err := s.discoverFolders(acct); err != nil {
+		log.Printf("folder refresh for account %d: %v", acct.ID, err) //nolint:gosec
+	}
+	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }

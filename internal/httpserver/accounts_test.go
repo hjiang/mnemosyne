@@ -284,6 +284,43 @@ func TestAccounts_Update_KeepsPassword(t *testing.T) {
 }
 
 // isolation — user A cannot update user B's account
+func TestAccounts_FolderRefresh_Redirects(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
+	env.accounts.CreateFolder(acct.ID, "INBOX") //nolint:errcheck,gosec
+
+	// The IMAP server is unreachable, but the handler should still redirect.
+	rr := env.doRequest(t, "POST",
+		fmt.Sprintf("/accounts/%d/folders/refresh", acct.ID),
+		env.cookieA,
+		nil,
+	)
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusSeeOther)
+	}
+	loc := rr.Header().Get("Location")
+	want := fmt.Sprintf("/accounts/%d/folders", acct.ID)
+	if loc != want {
+		t.Errorf("Location = %q, want %q", loc, want)
+	}
+}
+
+func TestAccounts_FolderRefresh_CrossUser_404(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acctB, _ := env.accounts.Create(env.userBID, "B's", "host", 993, "u", "p", true, "", 0, "", "")
+
+	rr := env.doRequest(t, "POST",
+		fmt.Sprintf("/accounts/%d/folders/refresh", acctB.ID),
+		env.cookieA,
+		nil,
+	)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
 func TestAccounts_Update_CrossUser_404(t *testing.T) {
 	env := newAcctTestEnv(t)
 

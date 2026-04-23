@@ -571,3 +571,99 @@ func TestList_OmitsOAuthTokens(t *testing.T) {
 		t.Errorf("AuthType = %q, want %q", accts[0].AuthType, "oauth_google")
 	}
 }
+
+func TestMarkFoldersOffServer(t *testing.T) {
+	env := newTestEnv(t)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
+
+	env.repo.CreateFolder(acct.ID, "INBOX")    //nolint:errcheck,gosec
+	env.repo.CreateFolder(acct.ID, "Sent")     //nolint:errcheck,gosec
+	env.repo.CreateFolder(acct.ID, "Drafts")   //nolint:errcheck,gosec
+
+	// Mark "Sent" as no longer on server.
+	if err := env.repo.MarkFoldersOffServer(acct.ID, []string{"INBOX", "Drafts"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// ListFolders returns all (including off-server).
+	all, err := env.repo.ListFolders(acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("ListFolders: got %d, want 3", len(all))
+	}
+
+	// ListActiveFolders excludes off-server.
+	active, err := env.repo.ListActiveFolders(acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("ListActiveFolders: got %d, want 2", len(active))
+	}
+	for _, f := range active {
+		if f.Name == "Sent" {
+			t.Error("ListActiveFolders should not include off-server folder 'Sent'")
+		}
+	}
+}
+
+func TestCreateFolder_RestoresOnServer(t *testing.T) {
+	env := newTestEnv(t)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
+
+	env.repo.CreateFolder(acct.ID, "INBOX") //nolint:errcheck,gosec
+
+	// Mark all folders off-server.
+	if err := env.repo.MarkFoldersOffServer(acct.ID, []string{}); err != nil {
+		t.Fatal(err)
+	}
+
+	active, _ := env.repo.ListActiveFolders(acct.ID)
+	if len(active) != 0 {
+		t.Fatalf("expected 0 active folders, got %d", len(active))
+	}
+
+	// Re-creating the folder should restore on_server.
+	env.repo.CreateFolder(acct.ID, "INBOX") //nolint:errcheck,gosec
+
+	active, _ = env.repo.ListActiveFolders(acct.ID)
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active folder after re-create, got %d", len(active))
+	}
+	if active[0].Name != "INBOX" {
+		t.Errorf("expected INBOX, got %q", active[0].Name)
+	}
+}
+
+func TestDelete(t *testing.T) {
+	env := newTestEnv(t)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
+
+	if err := env.repo.Delete(acct.ID, env.userA); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := env.repo.GetByID(acct.ID, env.userA)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound after delete, got %v", err)
+	}
+}
+
+func TestDelete_UserIsolation(t *testing.T) {
+	env := newTestEnv(t)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
+
+	// userB should not be able to delete userA's account.
+	err := env.repo.Delete(acct.ID, env.userB)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for wrong user, got %v", err)
+	}
+
+	// Account should still exist for userA.
+	_, err = env.repo.GetByID(acct.ID, env.userA)
+	if err != nil {
+		t.Errorf("account should still exist, got %v", err)
+	}
+}
