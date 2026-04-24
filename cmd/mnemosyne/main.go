@@ -34,11 +34,13 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mnemosyne <serve|adduser> [options]")
+		printUsage()
 		os.Exit(1)
 	}
 
 	switch os.Args[1] {
+	case "-h", "--help", "help":
+		printUsage()
 	case "serve":
 		if err := runServe(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -50,9 +52,34 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
+		printUsage()
 		os.Exit(1)
 	}
+}
+
+func printUsage() {
+	fmt.Print(`Mnemosyne - Self-hosted IMAP email backup and search
+
+Usage:
+  mnemosyne <command> [arguments]
+
+Commands:
+  serve       Start the HTTP server
+  adduser     Create a new user: mnemosyne adduser <email>
+
+Configuration:
+  Config file path is set via MNEMOSYNE_CONFIG (default: /etc/mnemosyne/config.yaml).
+  If no config file exists, defaults are used with environment variable overrides.
+
+Environment Variables:
+  MNEMOSYNE_CONFIG                       Path to YAML config file
+  MNEMOSYNE_LISTEN                       Listen address (default: :8080)
+  MNEMOSYNE_DATA_DIR                     Data directory (default: /var/lib/mnemosyne)
+  MNEMOSYNE_BASE_URL                     Base URL (default: http://localhost:8080)
+  MNEMOSYNE_OAUTH_GOOGLE_CLIENT_ID       Google OAuth client ID
+  MNEMOSYNE_OAUTH_GOOGLE_CLIENT_SECRET   Google OAuth client secret
+`)
 }
 
 func loadConfig() (config.Config, error) {
