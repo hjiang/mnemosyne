@@ -342,7 +342,7 @@ func parseAccountForm(r *http.Request) (*accountFormInput, string) {
 	return in, ""
 }
 
-func (s *Server) discoverFolders(acct *accounts.Account) error {
+func (s *Server) doDiscoverFolders(acct *accounts.Account) error {
 	addr := fmt.Sprintf("%s:%d", acct.Host, acct.Port)
 
 	var proxyConf *imapwrap.ProxyConfig

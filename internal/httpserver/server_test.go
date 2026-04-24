@@ -57,7 +57,7 @@ func newTestEnv(t *testing.T) *testEnv {
 // createUser is a helper that creates a user with a bcrypt password.
 func (e *testEnv) createUser(t *testing.T, email, password string) {
 	t.Helper()
-	hash, err := auth.HashPassword(password)
+	hash, err := auth.HashPasswordForTesting(password)
 	if err != nil {
 		t.Fatal(err)
 	}

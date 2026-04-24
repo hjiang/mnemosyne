@@ -74,7 +74,7 @@ func newOAuthTestEnv(t *testing.T, withTokenMgr bool) *oauthTestEnv {
 
 	srv := New(userRepo, sessions, acctRepo, orch, jobQueue, msgRepo, searchExec, store, tm)
 
-	hash, _ := auth.HashPassword("pass")
+	hash, _ := auth.HashPasswordForTesting("pass")
 	u, _ := userRepo.Create("test@test.com", hash)
 	sess, _ := sessions.Create(u.ID)
 
@@ -184,7 +184,7 @@ func TestOAuthCallback_CrossUserState(t *testing.T) {
 	env := newOAuthTestEnv(t, true)
 
 	// Create a second user.
-	hash, _ := auth.HashPassword("pass")
+	hash, _ := auth.HashPasswordForTesting("pass")
 	uB, _ := env.server.users.Create("other@test.com", hash)
 	sessB, _ := env.sessions.Create(uB.ID)
 	cookieB := hex.EncodeToString(sessB.ID)
@@ -258,6 +258,9 @@ func TestOAuthCallback_SuccessPath(t *testing.T) {
 		}
 		return "user@example.com", nil
 	}
+
+	// Override discoverFolders to skip the real IMAP dial.
+	env.server.discoverFolders = func(_ *accounts.Account) error { return nil }
 
 	// Generate a valid state for the authenticated user.
 	_, state, err := env.tokenMgr.AuthCodeURL(env.userID)

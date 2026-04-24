@@ -18,6 +18,15 @@ func HashPassword(plaintext string) (string, error) {
 	return string(hash), nil
 }
 
+// HashPasswordForTesting returns a bcrypt hash using minimum cost. Only for tests.
+func HashPasswordForTesting(plaintext string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), bcrypt.MinCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
 // VerifyPassword checks a plaintext password against a bcrypt hash.
 // Returns nil on success, ErrInvalidPassword on mismatch.
 func VerifyPassword(hash, plaintext string) error {

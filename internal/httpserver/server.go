@@ -43,6 +43,10 @@ type Server struct {
 	// fetchEmail fetches the user's email from the OAuth provider.
 	// Defaults to fetchGoogleEmail; overridable in tests.
 	fetchEmail func(ctx context.Context, accessToken string) (string, error)
+
+	// discoverFolders discovers folders for an account via IMAP and persists them.
+	// Defaults to doDiscoverFolders; overridable in tests.
+	discoverFolders func(acct *accounts.Account) error
 }
 
 // New creates an HTTP server with all routes wired.
@@ -89,6 +93,7 @@ func New(userRepo *users.Repo, sessions *auth.SessionStore, acctRepo *accounts.R
 		tokenMgr:   tokenMgr,
 		fetchEmail: fetchGoogleEmail,
 	}
+	s.discoverFolders = s.doDiscoverFolders
 
 	s.router.Handle("/static/*", http.FileServer(http.FS(staticFS)))
 
