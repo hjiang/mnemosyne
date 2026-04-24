@@ -30,7 +30,7 @@ body {
 
 main.container {
     flex: 1;
-    max-width: 960px;
+    max-width: 1280px;
     padding-top: 1rem;
     padding-bottom: 3rem;
 }
@@ -170,7 +170,8 @@ article.card footer {
     margin-bottom: 0;
     width: auto;
     flex-shrink: 0;
-    padding-inline: 1.25rem;
+    padding: 0.5rem 1.25rem;
+    height: auto;
 }
 
 .search-hint {
@@ -552,10 +553,6 @@ a.result-link:hover .result-card {
 }
 
 /* ── Browse ─────────────────────────────────── */
-
-main.container:has(.browse-page) {
-    max-width: 1280px;
-}
 
 .browse-page {
     display: grid;
