@@ -43,6 +43,7 @@ type Result struct {
 	NewMessages  int
 	NewLocations int
 	NewEnvelopes int // envelope fetches count as progress for retry decisions
+	NewDeletions int // Wave A mark-deletes count as progress for retry decisions
 	Errors       []error
 }
 
@@ -201,11 +202,15 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 
 		// Retry loop: keep syncing as long as forward progress is made.
 		// On connection failure, reconnect and retry. Stop when no new
-		// locations or envelopes are stored (no progress) or on non-connection errors.
+		// locations, envelopes, or deletions are made (no progress) or on
+		// non-connection errors. When giving up, return immediately — a dead
+		// connection makes subsequent folders pointless.
 		var accEnvs []imapwrap.Envelope
+		gaveUp := false
 		for {
 			prevLocs := result.NewLocations
 			prevEnvs := result.NewEnvelopes
+			prevDels := result.NewDeletions
 			syncErr := o.syncFolder(client, folder, userID, result, &accEnvs)
 			if syncErr == nil {
 				accEnvs = nil
@@ -219,9 +224,13 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 				break
 			}
 
-			if result.NewLocations == prevLocs && result.NewEnvelopes == prevEnvs {
+			noProgress := result.NewLocations == prevLocs &&
+				result.NewEnvelopes == prevEnvs &&
+				result.NewDeletions == prevDels
+			if noProgress {
 				result.Errors = append(result.Errors, fmt.Errorf("folder %q: no progress, giving up: %w", folder.Name, syncErr))
 				accEnvs = nil
+				gaveUp = true
 				break
 			}
 
@@ -230,10 +239,8 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 			newClient, dialErr := o.connectAccount(acct, addr)
 			if dialErr != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("folder %q reconnect: %w", folder.Name, dialErr))
-				// Try once more so subsequent folders aren't stuck with a dead client.
-				if c, err := o.connectAccount(acct, addr); err == nil {
-					client = c
-				}
+				accEnvs = nil
+				gaveUp = true
 				break
 			}
 			client = newClient
@@ -242,6 +249,9 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 			if f := o.reloadFolder(accountID, folder.ID); f != nil {
 				folder = f
 			}
+		}
+		if gaveUp {
+			break
 		}
 	}
 
@@ -348,29 +358,38 @@ func (o *Orchestrator) syncFolder(
 
 	// Mark-delete previously-backed-up messages that fall in the expunge set.
 	var deletesSinceExpunge int
+	var waveAErr error
 	for uid := range expungeSet {
 		if !backedUp[uid] {
 			continue
 		}
 		if err := client.MarkDeleted([]uint32{uid}); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("mark deleted UID %d: %w", uid, err))
+			waveAErr = fmt.Errorf("mark deleted UID %d: %w", uid, err)
 			break
 		}
 		deletesSinceExpunge++
 		if deletesSinceExpunge >= ebSize {
 			if err := client.Expunge(); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
+				waveAErr = fmt.Errorf("expunge: %w", err)
 				break
 			}
+			result.NewDeletions += deletesSinceExpunge
 			deletesSinceExpunge = 0
 		}
+	}
+
+	if waveAErr != nil {
+		result.Errors = append(result.Errors, waveAErr)
+		return &connError{err: waveAErr}
 	}
 
 	if len(envs) == 0 {
 		if deletesSinceExpunge > 0 {
 			if err := client.Expunge(); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
+				return &connError{err: err}
 			}
+			result.NewDeletions += deletesSinceExpunge
 		}
 		return nil
 	}

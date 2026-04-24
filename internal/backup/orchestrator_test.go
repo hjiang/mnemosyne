@@ -1523,6 +1523,32 @@ func TestRun_OAuthTokenRefreshTimeout(t *testing.T) {
 	}
 }
 
+// failingExpungeClient wraps an IMAPClient where MarkDeleted always succeeds
+// but Expunge always fails, simulating a connection that dies exactly at flush time.
+type failingExpungeClient struct {
+	IMAPClient
+}
+
+func (f *failingExpungeClient) Expunge() error {
+	return fmt.Errorf("connection reset by peer")
+}
+
+// partialMarkDeleteClient wraps an IMAPClient and simulates a connection drop
+// during MarkDeleted after a given number of successful calls.
+type partialMarkDeleteClient struct {
+	IMAPClient
+	succeedCount int // how many MarkDeleted calls succeed before failing
+	calls        int
+}
+
+func (p *partialMarkDeleteClient) MarkDeleted(uids []uint32) error {
+	p.calls++
+	if p.calls > p.succeedCount {
+		return fmt.Errorf("connection reset by peer")
+	}
+	return p.IMAPClient.MarkDeleted(uids)
+}
+
 // expungeSpyClient wraps an IMAPClient and counts Expunge calls.
 type expungeSpyClient struct {
 	IMAPClient
@@ -1654,5 +1680,183 @@ func TestOrchestrator_BatchedExpunge_PreviouslyBackedUp(t *testing.T) {
 	}
 	if info.NumMessages != 1 {
 		t.Errorf("IMAP NumMessages = %d, want 1", info.NumMessages)
+	}
+}
+
+// Test: Wave A (previously-backed-up deletion) connection drop is retried
+// when some deletions already succeeded (progress was made).
+func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	// Seed 5 messages and back them all up under the "all" policy.
+	for i := 1; i <= 5; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <wavea%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tighten policy: keep newest 1 → 4 messages subject to Wave A deletion.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":1}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run: inject a client that fails MarkDeleted after 2 successes.
+	dialCount := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		dialCount++
+		realClient := connectTestIMAP(t, env.imapSrv)
+		if dialCount <= 1 {
+			// First connection: MarkDeleted fails after 2 successful calls.
+			return &partialMarkDeleteClient{IMAPClient: realClient, succeedCount: 2}, nil
+		}
+		// Subsequent connections: work normally.
+		return realClient, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Retried and completed: all 4 old messages deleted from server.
+	if dialCount < 2 {
+		t.Errorf("dialCount = %d, want >= 2 (should have reconnected)", dialCount)
+	}
+	if result.NewDeletions == 0 {
+		t.Error("NewDeletions = 0, want > 0")
+	}
+
+	client := connectTestIMAP(t, env.imapSrv)
+	info, err := client.SelectFolder("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.NumMessages != 1 {
+		t.Errorf("IMAP NumMessages after retry = %d, want 1", info.NumMessages)
+	}
+}
+
+// Test: Wave A connection drop with no progress stops immediately and does not
+// process subsequent folders.
+//
+// ListActiveFolders has no ORDER BY, so folders are returned in reverse-insertion
+// order. We create Archive first so it is processed first, then INBOX — which
+// must not be touched after Archive gives up.
+func TestOrchestrator_WaveA_GivesUpAndStopsFolders(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Archive is created first → processed first by the orchestrator.
+	folderID1 := enableFolder(t, env, "Archive")
+	// INBOX created second → would be processed second (should be skipped).
+	folderID2 := enableFolder(t, env, "INBOX")
+
+	// Seed and back up messages in Archive under the default "all" policy.
+	for i := 1; i <= 3; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: archive %d\r\nMessage-ID: <stop%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "Archive", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tighten Archive policy: all 3 messages become Wave A deletion candidates.
+	if err := env.accountsRepo.SetFolderPolicy(folderID1, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed new messages into INBOX (should never be fetched if we stop early).
+	for i := 1; i <= 3; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: inbox %d\r\nMessage-ID: <arch%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+
+	// Inject a client where MarkDeleted always fails (no progress possible).
+	dialCount := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		dialCount++
+		realClient := connectTestIMAP(t, env.imapSrv)
+		return &partialMarkDeleteClient{IMAPClient: realClient, succeedCount: 0}, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Gave up after one attempt: no progress, no retry.
+	if dialCount != 1 {
+		t.Errorf("dialCount = %d, want 1 (should not retry without progress)", dialCount)
+	}
+	if len(result.Errors) == 0 {
+		t.Error("expected errors to be reported")
+	}
+
+	// INBOX must not have been processed.
+	inboxMsgs, err := env.messagesRepo.ListByFolder(folderID2, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inboxMsgs) != 0 {
+		t.Errorf("INBOX messages backed up = %d, want 0 (folder processing should have stopped)", len(inboxMsgs))
+	}
+}
+
+// Test: when MarkDeleted succeeds but Expunge always fails, the retry loop
+// must not treat repeated MarkDeleted calls as "progress" and loop forever.
+// It should give up after the first failed Expunge with no real progress made.
+func TestOrchestrator_WaveA_ExpungeFailureDoesNotLoopForever(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	// Seed and back up 4 messages.
+	for i := 1; i <= 4; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <exp%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// All 4 are now deletion candidates.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inject a client where MarkDeleted works but Expunge always fails.
+	dialCount := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		dialCount++
+		realClient := connectTestIMAP(t, env.imapSrv)
+		return &failingExpungeClient{IMAPClient: realClient}, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Must not retry: Expunge failure with no successful Expunge = no real progress.
+	if dialCount != 1 {
+		t.Errorf("dialCount = %d, want 1 (Expunge failure should not count as progress)", dialCount)
+	}
+	if len(result.Errors) == 0 {
+		t.Error("expected errors to be reported")
 	}
 }
