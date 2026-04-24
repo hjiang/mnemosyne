@@ -189,6 +189,7 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 	}
 
 	result := &Result{}
+folderLoop:
 	for i, folder := range enabled {
 		if onProgress != nil {
 			onProgress(Progress{
@@ -203,10 +204,9 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 		// Retry loop: keep syncing as long as forward progress is made.
 		// On connection failure, reconnect and retry. Stop when no new
 		// locations, envelopes, or deletions are made (no progress) or on
-		// non-connection errors. When giving up, return immediately — a dead
+		// non-connection errors. When giving up, break folderLoop — a dead
 		// connection makes subsequent folders pointless.
 		var accEnvs []imapwrap.Envelope
-		gaveUp := false
 		for {
 			prevLocs := result.NewLocations
 			prevEnvs := result.NewEnvelopes
@@ -229,9 +229,7 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 				result.NewDeletions == prevDels
 			if noProgress {
 				result.Errors = append(result.Errors, fmt.Errorf("folder %q: no progress, giving up: %w", folder.Name, syncErr))
-				accEnvs = nil
-				gaveUp = true
-				break
+				break folderLoop
 			}
 
 			// Made progress — reconnect and retry.
@@ -239,9 +237,7 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 			newClient, dialErr := o.connectAccount(acct, addr)
 			if dialErr != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("folder %q reconnect: %w", folder.Name, dialErr))
-				accEnvs = nil
-				gaveUp = true
-				break
+				break folderLoop
 			}
 			client = newClient
 
@@ -249,9 +245,6 @@ func (o *Orchestrator) Run(accountID, userID int64, onProgress ProgressFunc) (*R
 			if f := o.reloadFolder(accountID, folder.ID); f != nil {
 				folder = f
 			}
-		}
-		if gaveUp {
-			break
 		}
 	}
 
