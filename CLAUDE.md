@@ -105,6 +105,8 @@ srv.AppendMessage(t, "INBOX", rawBytes)  // seed specific message
 // connect with: srv.Addr, srv.Username ("testuser"), srv.Password ("testpass")
 ```
 
+`ListActiveFolders` has no `ORDER BY`; folders are returned in reverse insertion order (last created = first processed by the orchestrator). Tests that depend on folder processing order must create folders in reverse of the desired sequence.
+
 ### Config
 
 Config file at `MNEMOSYNE_CONFIG` (default `/etc/mnemosyne/config.yaml`). Falls back to defaults with env overrides: `MNEMOSYNE_LISTEN`, `MNEMOSYNE_DATA_DIR`, `MNEMOSYNE_BASE_URL`.
