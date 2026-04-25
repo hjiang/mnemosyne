@@ -1726,10 +1726,10 @@ func TestOrchestrator_BatchedExpunge_PreviouslyBackedUp(t *testing.T) {
 	}
 }
 
-// Test: Wave A batches MarkDeleted into ebSize-sized UID sets rather than
+// Test: retention sweep batches MarkDeleted into ebSize-sized UID sets rather than
 // issuing one STORE per UID. With 6 deletions and ebSize=3 we expect 2
 // MarkDeleted calls, not 6.
-func TestOrchestrator_WaveA_BatchesMarkDeleted(t *testing.T) {
+func TestOrchestrator_RetentionSweep_BatchesMarkDeleted(t *testing.T) {
 	env := newTestEnv(t)
 	folderID := enableFolder(t, env, "INBOX")
 	env.orchestrator.expungeBatchSize = 3
@@ -1745,7 +1745,7 @@ func TestOrchestrator_WaveA_BatchesMarkDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tighten policy: 6 previously-backed-up messages become Wave A targets.
+	// Tighten policy: 6 previously-backed-up messages become retention sweep targets.
 	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":1}`); err != nil {
 		t.Fatal(err)
 	}
@@ -1780,10 +1780,10 @@ func TestOrchestrator_WaveA_BatchesMarkDeleted(t *testing.T) {
 	}
 }
 
-// Test: after Wave A succeeds completely, the cursor is reset to 0 so the
+// Test: after retention sweep succeeds completely, the cursor is reset to 0 so the
 // next sync starts fresh; while in progress, the cursor records the highest
 // successfully-checkpointed UID.
-func TestOrchestrator_WaveA_CursorLifecycle(t *testing.T) {
+func TestOrchestrator_RetentionSweep_CursorLifecycle(t *testing.T) {
 	env := newTestEnv(t)
 	folderID := enableFolder(t, env, "INBOX")
 	env.orchestrator.expungeBatchSize = 2
@@ -1810,15 +1810,15 @@ func TestOrchestrator_WaveA_CursorLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.WaveACursor != 0 {
-		t.Errorf("WaveACursor after full sweep = %d, want 0", f.WaveACursor)
+	if f.LastSweptUID != 0 {
+		t.Errorf("LastSweptUID after full sweep = %d, want 0", f.LastSweptUID)
 	}
 }
 
-// Test: Wave A cursor lets a retry after a connection drop skip UIDs whose
+// Test: retention sweep cursor lets a retry after a connection drop skip UIDs whose
 // mark+expunge was already durably checkpointed. The retry should not
 // re-issue MarkDeleted for those UIDs.
-func TestOrchestrator_WaveA_CursorSkipsCompletedBatches(t *testing.T) {
+func TestOrchestrator_RetentionSweep_CursorSkipsCompletedBatches(t *testing.T) {
 	env := newTestEnv(t)
 	folderID := enableFolder(t, env, "INBOX")
 	env.orchestrator.expungeBatchSize = 2
@@ -1840,7 +1840,7 @@ func TestOrchestrator_WaveA_CursorSkipsCompletedBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// First Wave A run: only the very first MarkDeleted across all reconnects
+	// First retention sweep run: only the very first MarkDeleted across all reconnects
 	// succeeds. After that, the retry loop reconnects, the very next batch
 	// fails, no progress is made, and the orchestrator gives up — leaving the
 	// cursor at the highest UID from batch 1.
@@ -1857,10 +1857,10 @@ func TestOrchestrator_WaveA_CursorSkipsCompletedBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.WaveACursor == 0 {
-		t.Fatal("WaveACursor not advanced after partial Wave A success")
+	if f.LastSweptUID == 0 {
+		t.Fatal("LastSweptUID not advanced after partial retention sweep success")
 	}
-	cursorAfterFirst := f.WaveACursor
+	cursorAfterFirst := f.LastSweptUID
 
 	// Second run: fresh client, observe how many UIDs MarkDeleted is asked to
 	// process. With 6 originally and ~2 already done, retry should mark only ~4.
@@ -1880,15 +1880,15 @@ func TestOrchestrator_WaveA_CursorSkipsCompletedBatches(t *testing.T) {
 
 	// Final state: server is empty, cursor reset.
 	f, _ = env.accountsRepo.GetFolderByID(folderID, env.userID)
-	if f.WaveACursor != 0 {
-		t.Errorf("WaveACursor after full completion = %d, want 0", f.WaveACursor)
+	if f.LastSweptUID != 0 {
+		t.Errorf("LastSweptUID after full completion = %d, want 0", f.LastSweptUID)
 	}
 }
 
-// Test: a permanent IMAP server error (NO response) during Wave A is not
+// Test: a permanent IMAP server error (NO response) during retention sweep is not
 // classified as a connection error, so the retry loop does not reconnect
 // and does not re-attempt the same operation.
-func TestOrchestrator_WaveA_PermanentErrorNotRetried(t *testing.T) {
+func TestOrchestrator_RetentionSweep_PermanentErrorNotRetried(t *testing.T) {
 	env := newTestEnv(t)
 	folderID := enableFolder(t, env, "INBOX")
 	env.orchestrator.expungeBatchSize = 2
@@ -1932,9 +1932,9 @@ func TestOrchestrator_WaveA_PermanentErrorNotRetried(t *testing.T) {
 	}
 }
 
-// Test: Wave A (previously-backed-up deletion) connection drop is retried
+// Test: retention sweep connection drop is retried
 // when some deletions already succeeded (progress was made).
-func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
+func TestOrchestrator_RetentionSweep_RetryOnConnDrop(t *testing.T) {
 	env := newTestEnv(t)
 	folderID := enableFolder(t, env, "INBOX")
 	env.orchestrator.expungeBatchSize = 2
@@ -1951,7 +1951,7 @@ func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tighten policy: keep newest 1 → 4 messages subject to Wave A deletion.
+	// Tighten policy: keep newest 1 → 4 messages subject to retention sweep deletion.
 	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":1}`); err != nil {
 		t.Fatal(err)
 	}
@@ -1992,13 +1992,13 @@ func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
 	}
 }
 
-// Test: Wave A connection drop with no progress stops immediately and does not
+// Test: retention sweep connection drop with no progress stops immediately and does not
 // process subsequent folders.
 //
 // ListActiveFolders has no ORDER BY, so folders are returned in reverse-insertion
 // order. We create Archive first so it is processed first, then INBOX — which
 // must not be touched after Archive gives up.
-func TestOrchestrator_WaveA_GivesUpAndStopsFolders(t *testing.T) {
+func TestOrchestrator_RetentionSweep_GivesUpAndStopsFolders(t *testing.T) {
 	env := newTestEnv(t)
 
 	// Archive is created first → processed first by the orchestrator.
@@ -2018,7 +2018,7 @@ func TestOrchestrator_WaveA_GivesUpAndStopsFolders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tighten Archive policy: all 3 messages become Wave A deletion candidates.
+	// Tighten Archive policy: all 3 messages become retention sweep deletion candidates.
 	if err := env.accountsRepo.SetFolderPolicy(folderID1, `{"leave_on_server":"newest_n","n":0}`); err != nil {
 		t.Fatal(err)
 	}
@@ -2066,7 +2066,7 @@ func TestOrchestrator_WaveA_GivesUpAndStopsFolders(t *testing.T) {
 // Test: when MarkDeleted succeeds but Expunge always fails, the retry loop
 // must not treat repeated MarkDeleted calls as "progress" and loop forever.
 // It should give up after the first failed Expunge with no real progress made.
-func TestOrchestrator_WaveA_ExpungeFailureDoesNotLoopForever(t *testing.T) {
+func TestOrchestrator_RetentionSweep_ExpungeFailureDoesNotLoopForever(t *testing.T) {
 	env := newTestEnv(t)
 	folderID := enableFolder(t, env, "INBOX")
 	env.orchestrator.expungeBatchSize = 2

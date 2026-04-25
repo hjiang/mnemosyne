@@ -290,11 +290,11 @@ func (o *Orchestrator) syncFolder(
 		if err := o.accounts.SetLastSeenUID(folder.ID, 0); err != nil {
 			return fmt.Errorf("resetting last_seen_uid: %w", err)
 		}
-		if err := o.accounts.SetWaveACursor(folder.ID, 0); err != nil {
-			return fmt.Errorf("resetting wave_a_cursor: %w", err)
+		if err := o.accounts.SetLastSweptUID(folder.ID, 0); err != nil {
+			return fmt.Errorf("resetting last_swept_uid: %w", err)
 		}
 		folder.LastSeenUID = 0
-		folder.WaveACursor = 0
+		folder.LastSweptUID = 0
 	}
 
 	if err := o.accounts.SetUIDValidity(folder.ID, info.UIDValidity); err != nil {
@@ -358,21 +358,21 @@ func (o *Orchestrator) syncFolder(
 		}
 	}
 
-	// Wave A: mark-delete previously-backed-up messages that fall in the expunge
+	// Retention sweep: mark-delete previously-backed-up messages that fall in the expunge
 	// set. Process in chunks aligned with the EXPUNGE cadence: each chunk is one
 	// SQL filter ("of these UIDs, which are backed up?") + one MarkDeleted + one
 	// Expunge + one cursor checkpoint. Backed-up gating happens per chunk so we
 	// never load the full folder's locations into memory.
 	candidates := make([]uint32, 0, len(expungeSet))
 	for uid := range expungeSet {
-		if uid > folder.WaveACursor {
+		if uid > folder.LastSweptUID {
 			candidates = append(candidates, uid)
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
 
 	var deletesSinceExpunge int
-	var waveAErr error
+	var sweepErr error
 	for i := 0; i < len(candidates); i += ebSize {
 		end := i + ebSize
 		if end > len(candidates) {
@@ -381,42 +381,42 @@ func (o *Orchestrator) syncFolder(
 		chunk := candidates[i:end]
 		backedUp, err := o.messages.FilterBackedUpUIDs(folder.ID, chunk)
 		if err != nil {
-			waveAErr = fmt.Errorf("filter backed-up uids: %w", err)
+			sweepErr = fmt.Errorf("filter backed-up uids: %w", err)
 			break
 		}
 		highest := chunk[len(chunk)-1] // advance cursor past the whole chunk
 		if len(backedUp) > 0 {
 			if err := client.MarkDeleted(backedUp); err != nil {
-				waveAErr = fmt.Errorf("mark deleted: %w", err)
+				sweepErr = fmt.Errorf("mark deleted: %w", err)
 				break
 			}
 			if err := client.Expunge(); err != nil {
-				waveAErr = fmt.Errorf("expunge: %w", err)
+				sweepErr = fmt.Errorf("expunge: %w", err)
 				break
 			}
 			result.NewDeletions += len(backedUp)
 		}
-		if err := o.accounts.SetWaveACursor(folder.ID, highest); err != nil {
-			waveAErr = fmt.Errorf("persist wave_a_cursor: %w", err)
+		if err := o.accounts.SetLastSweptUID(folder.ID, highest); err != nil {
+			sweepErr = fmt.Errorf("persist last_swept_uid: %w", err)
 			break
 		}
-		folder.WaveACursor = highest
+		folder.LastSweptUID = highest
 	}
 
-	if waveAErr != nil {
-		result.Errors = append(result.Errors, waveAErr)
-		if isTransient(waveAErr) {
-			return &connError{err: waveAErr}
+	if sweepErr != nil {
+		result.Errors = append(result.Errors, sweepErr)
+		if isTransient(sweepErr) {
+			return &connError{err: sweepErr}
 		}
-		return waveAErr
+		return sweepErr
 	}
 
-	// Wave A swept clean — reset the cursor so the next sync starts fresh.
-	if folder.WaveACursor != 0 {
-		if err := o.accounts.SetWaveACursor(folder.ID, 0); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("clearing wave_a_cursor: %w", err))
+	// Sweep finished cleanly — reset the cursor so the next sync starts fresh.
+	if folder.LastSweptUID != 0 {
+		if err := o.accounts.SetLastSweptUID(folder.ID, 0); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("clearing last_swept_uid: %w", err))
 		} else {
-			folder.WaveACursor = 0
+			folder.LastSweptUID = 0
 		}
 	}
 

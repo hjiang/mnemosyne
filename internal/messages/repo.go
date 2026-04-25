@@ -324,9 +324,9 @@ func (r *Repo) ListLocationsByFolder(folderID int64) ([]Location, error) {
 }
 
 // FilterBackedUpUIDs returns the subset of the input UIDs that have a location
-// row in the given folder, in ascending order. Used by the Wave A deletion
-// loop to gate per-batch ("only delete from server what we've durably backed
-// up") without loading the entire location set into memory.
+// row in the given folder, in ascending order. Used by the retention-sweep
+// deletion loop to gate per-batch ("only delete from server what we've
+// durably backed up") without loading the entire location set into memory.
 func (r *Repo) FilterBackedUpUIDs(folderID int64, uids []uint32) ([]uint32, error) {
 	if len(uids) == 0 {
 		return nil, nil
