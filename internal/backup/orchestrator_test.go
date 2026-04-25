@@ -1549,15 +1549,27 @@ func (p *partialMarkDeleteClient) MarkDeleted(uids []uint32) error {
 	return p.IMAPClient.MarkDeleted(uids)
 }
 
-// expungeSpyClient wraps an IMAPClient and counts Expunge calls.
+// expungeSpyClient wraps an IMAPClient and counts Expunge + MarkDeleted calls.
 type expungeSpyClient struct {
 	IMAPClient
-	expungeCalls int
+	expungeCalls  int
+	markCalls     int
+	markUIDsTotal int
+	maxBatch      int
 }
 
 func (s *expungeSpyClient) Expunge() error {
 	s.expungeCalls++
 	return s.IMAPClient.Expunge()
+}
+
+func (s *expungeSpyClient) MarkDeleted(uids []uint32) error {
+	s.markCalls++
+	s.markUIDsTotal += len(uids)
+	if len(uids) > s.maxBatch {
+		s.maxBatch = len(uids)
+	}
+	return s.IMAPClient.MarkDeleted(uids)
 }
 
 func TestOrchestrator_BatchedExpunge(t *testing.T) {
@@ -1683,6 +1695,60 @@ func TestOrchestrator_BatchedExpunge_PreviouslyBackedUp(t *testing.T) {
 	}
 }
 
+// Test: Wave A batches MarkDeleted into ebSize-sized UID sets rather than
+// issuing one STORE per UID. With 6 deletions and ebSize=3 we expect 2
+// MarkDeleted calls, not 6.
+func TestOrchestrator_WaveA_BatchesMarkDeleted(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 3
+
+	for i := 1; i <= 7; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <wab%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tighten policy: 6 previously-backed-up messages become Wave A targets.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":1}`); err != nil {
+		t.Fatal(err)
+	}
+
+	var spy *expungeSpyClient
+	env.orchestrator.dialFunc = func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) {
+		inner, err := imapwrap.Dial(addr, user, pass, tls, proxyConf)
+		if err != nil {
+			return nil, err
+		}
+		spy = &expungeSpyClient{IMAPClient: inner}
+		return spy, nil
+	}
+
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if spy == nil {
+		t.Fatal("spy not injected")
+	}
+	if spy.markCalls != 2 {
+		t.Errorf("markCalls = %d, want 2 (ceil(6/3))", spy.markCalls)
+	}
+	if spy.markUIDsTotal != 6 {
+		t.Errorf("markUIDsTotal = %d, want 6", spy.markUIDsTotal)
+	}
+	if spy.maxBatch != 3 {
+		t.Errorf("maxBatch = %d, want 3", spy.maxBatch)
+	}
+	if spy.expungeCalls != 2 {
+		t.Errorf("expungeCalls = %d, want 2 (one per batch)", spy.expungeCalls)
+	}
+}
+
 // Test: Wave A (previously-backed-up deletion) connection drop is retried
 // when some deletions already succeeded (progress was made).
 func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
@@ -1707,16 +1773,16 @@ func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Second run: inject a client that fails MarkDeleted after 2 successes.
+	// Second run: inject a client that fails MarkDeleted after 1 successful
+	// batch. With ebSize=2 and 4 UIDs to delete, that means batch 1 succeeds
+	// (2 UIDs deleted), batch 2 fails — leaving 2 UIDs for the retry.
 	dialCount := 0
 	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
 		dialCount++
 		realClient := connectTestIMAP(t, env.imapSrv)
 		if dialCount <= 1 {
-			// First connection: MarkDeleted fails after 2 successful calls.
-			return &partialMarkDeleteClient{IMAPClient: realClient, succeedCount: 2}, nil
+			return &partialMarkDeleteClient{IMAPClient: realClient, succeedCount: 1}, nil
 		}
-		// Subsequent connections: work normally.
 		return realClient, nil
 	}
 

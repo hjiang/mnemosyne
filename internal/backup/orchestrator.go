@@ -349,26 +349,35 @@ func (o *Orchestrator) syncFolder(
 		backedUp[loc.UID] = true
 	}
 
-	// Mark-delete previously-backed-up messages that fall in the expunge set.
+	// Wave A: mark-delete previously-backed-up messages that fall in the expunge
+	// set. Process in batches aligned with the EXPUNGE cadence: each batch is one
+	// MarkDeleted + one Expunge, so every successful cycle is a single atomic
+	// checkpoint of `ebSize` deletions.
+	toDelete := make([]uint32, 0, len(expungeSet))
+	for uid := range expungeSet {
+		if backedUp[uid] {
+			toDelete = append(toDelete, uid)
+		}
+	}
+	sort.Slice(toDelete, func(i, j int) bool { return toDelete[i] < toDelete[j] })
+
 	var deletesSinceExpunge int
 	var waveAErr error
-	for uid := range expungeSet {
-		if !backedUp[uid] {
-			continue
+	for i := 0; i < len(toDelete); i += ebSize {
+		end := i + ebSize
+		if end > len(toDelete) {
+			end = len(toDelete)
 		}
-		if err := client.MarkDeleted([]uint32{uid}); err != nil {
-			waveAErr = fmt.Errorf("mark deleted UID %d: %w", uid, err)
+		batch := toDelete[i:end]
+		if err := client.MarkDeleted(batch); err != nil {
+			waveAErr = fmt.Errorf("mark deleted: %w", err)
 			break
 		}
-		deletesSinceExpunge++
-		if deletesSinceExpunge >= ebSize {
-			if err := client.Expunge(); err != nil {
-				waveAErr = fmt.Errorf("expunge: %w", err)
-				break
-			}
-			result.NewDeletions += deletesSinceExpunge
-			deletesSinceExpunge = 0
+		if err := client.Expunge(); err != nil {
+			waveAErr = fmt.Errorf("expunge: %w", err)
+			break
 		}
+		result.NewDeletions += len(batch)
 	}
 
 	if waveAErr != nil {
@@ -377,13 +386,6 @@ func (o *Orchestrator) syncFolder(
 	}
 
 	if len(envs) == 0 {
-		if deletesSinceExpunge > 0 {
-			if err := client.Expunge(); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
-				return &connError{err: err}
-			}
-			result.NewDeletions += deletesSinceExpunge
-		}
 		return nil
 	}
 
