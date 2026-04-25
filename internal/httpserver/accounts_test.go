@@ -187,6 +187,44 @@ func TestAccounts_FolderToggle(t *testing.T) {
 	}
 }
 
+// Test: folder resync zeros both progress cursors (last_seen_uid for the
+// fetch and last_swept_uid for the in-flight retention sweep). Resetting only
+// last_seen_uid leaves the next backup with a stale sweep cursor that silently
+// skips retention candidates below it until the cursor self-heals.
+func TestAccounts_FolderResync_ZerosBothCursors(t *testing.T) {
+	env := newAcctTestEnv(t)
+
+	acct, _ := env.accounts.Create(env.userAID, "Test", "host", 993, "u", "p", true, "", 0, "", "")
+	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
+
+	if err := env.accounts.SetLastSeenUID(folder.ID, 500); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.accounts.SetLastSweptUID(folder.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := env.doRequest(t, "POST",
+		fmt.Sprintf("/accounts/%d/folders/%d/resync", acct.ID, folder.ID),
+		env.cookieA,
+		url.Values{},
+	)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusSeeOther)
+	}
+
+	got, err := env.accounts.GetFolderByID(folder.ID, env.userAID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastSeenUID != 0 {
+		t.Errorf("LastSeenUID = %d, want 0", got.LastSeenUID)
+	}
+	if got.LastSweptUID != 0 {
+		t.Errorf("LastSweptUID = %d, want 0", got.LastSweptUID)
+	}
+}
+
 func TestAccounts_EditForm(t *testing.T) {
 	env := newAcctTestEnv(t)
 

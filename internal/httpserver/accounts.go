@@ -214,6 +214,10 @@ func (s *Server) folderResync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	if err := s.accounts.SetLastSweptUID(folderID, 0); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	http.Redirect(w, r, fmt.Sprintf("/accounts/%d/folders", acct.ID), http.StatusSeeOther)
 }
@@ -307,11 +311,11 @@ func (s *Server) requireAccount(w http.ResponseWriter, r *http.Request) (*accoun
 
 // accountFormInput holds the fields submitted by an IMAP-account form.
 type accountFormInput struct {
-	Label, Host, Username, Password        string
-	Port                                   int
-	UseTLS                                 bool
+	Label, Host, Username, Password         string
+	Port                                    int
+	UseTLS                                  bool
 	ProxyHost, ProxyUsername, ProxyPassword string
-	ProxyPort                              int
+	ProxyPort                               int
 }
 
 // parseAccountForm reads account form fields from the request.
