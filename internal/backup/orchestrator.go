@@ -43,7 +43,7 @@ type Result struct {
 	NewMessages  int
 	NewLocations int
 	NewEnvelopes int // envelope fetches count as progress for retry decisions
-	NewDeletions int // Wave A mark-deletes count as progress for retry decisions
+	NewDeletions int // mark+expunge cycles that durably removed messages; counts as progress for retry decisions
 	Errors       []error
 }
 
