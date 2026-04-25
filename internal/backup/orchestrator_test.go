@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	goiap "github.com/emersion/go-imap/v2"
+
 	"github.com/hjiang/mnemosyne/internal/accounts"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
 	"github.com/hjiang/mnemosyne/internal/blobs"
@@ -1523,6 +1525,35 @@ func TestRun_OAuthTokenRefreshTimeout(t *testing.T) {
 	}
 }
 
+// imapErrorMarkClient returns an *imap.Error (server NO response) on every
+// MarkDeleted call, simulating a permanent protocol-level rejection.
+type imapErrorMarkClient struct {
+	IMAPClient
+	calls int
+}
+
+func (c *imapErrorMarkClient) MarkDeleted(_ []uint32) error {
+	c.calls++
+	return &goiap.Error{Type: goiap.StatusResponseTypeNo, Text: "permission denied"}
+}
+
+// sharedFailMarkClient lets only the first `max` MarkDeleted calls (counted
+// via a shared counter across dials) succeed; subsequent calls fail. Used to
+// simulate a connection that drops mid-Wave-A even after reconnect.
+type sharedFailMarkClient struct {
+	IMAPClient
+	allow *int
+	max   int
+}
+
+func (s *sharedFailMarkClient) MarkDeleted(uids []uint32) error {
+	if *s.allow >= s.max {
+		return fmt.Errorf("connection reset by peer")
+	}
+	*s.allow++
+	return s.IMAPClient.MarkDeleted(uids)
+}
+
 // failingExpungeClient wraps an IMAPClient where MarkDeleted always succeeds
 // but Expunge always fails, simulating a connection that dies exactly at flush time.
 type failingExpungeClient struct {
@@ -1549,15 +1580,27 @@ func (p *partialMarkDeleteClient) MarkDeleted(uids []uint32) error {
 	return p.IMAPClient.MarkDeleted(uids)
 }
 
-// expungeSpyClient wraps an IMAPClient and counts Expunge calls.
+// expungeSpyClient wraps an IMAPClient and counts Expunge + MarkDeleted calls.
 type expungeSpyClient struct {
 	IMAPClient
-	expungeCalls int
+	expungeCalls  int
+	markCalls     int
+	markUIDsTotal int
+	maxBatch      int
 }
 
 func (s *expungeSpyClient) Expunge() error {
 	s.expungeCalls++
 	return s.IMAPClient.Expunge()
+}
+
+func (s *expungeSpyClient) MarkDeleted(uids []uint32) error {
+	s.markCalls++
+	s.markUIDsTotal += len(uids)
+	if len(uids) > s.maxBatch {
+		s.maxBatch = len(uids)
+	}
+	return s.IMAPClient.MarkDeleted(uids)
 }
 
 func TestOrchestrator_BatchedExpunge(t *testing.T) {
@@ -1683,9 +1726,280 @@ func TestOrchestrator_BatchedExpunge_PreviouslyBackedUp(t *testing.T) {
 	}
 }
 
-// Test: Wave A (previously-backed-up deletion) connection drop is retried
+// Test: retention sweep batches MarkDeleted into ebSize-sized UID sets rather than
+// issuing one STORE per UID. With 6 deletions and ebSize=3 we expect 2
+// MarkDeleted calls, not 6.
+func TestOrchestrator_RetentionSweep_BatchesMarkDeleted(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 3
+
+	for i := 1; i <= 7; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <wab%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tighten policy: 6 previously-backed-up messages become retention sweep targets.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":1}`); err != nil {
+		t.Fatal(err)
+	}
+
+	var spy *expungeSpyClient
+	env.orchestrator.dialFunc = func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) {
+		inner, err := imapwrap.Dial(addr, user, pass, tls, proxyConf)
+		if err != nil {
+			return nil, err
+		}
+		spy = &expungeSpyClient{IMAPClient: inner}
+		return spy, nil
+	}
+
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if spy == nil {
+		t.Fatal("spy not injected")
+	}
+	if spy.markCalls != 2 {
+		t.Errorf("markCalls = %d, want 2 (ceil(6/3))", spy.markCalls)
+	}
+	if spy.markUIDsTotal != 6 {
+		t.Errorf("markUIDsTotal = %d, want 6", spy.markUIDsTotal)
+	}
+	if spy.maxBatch != 3 {
+		t.Errorf("maxBatch = %d, want 3", spy.maxBatch)
+	}
+	if spy.expungeCalls != 2 {
+		t.Errorf("expungeCalls = %d, want 2 (one per batch)", spy.expungeCalls)
+	}
+}
+
+// Test: after retention sweep succeeds completely, the cursor is reset to 0 so the
+// next sync starts fresh; while in progress, the cursor records the highest
+// successfully-checkpointed UID.
+func TestOrchestrator_RetentionSweep_CursorLifecycle(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	for i := 1; i <= 4; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <cur%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.LastSweptUID != 0 {
+		t.Errorf("LastSweptUID after full sweep = %d, want 0", f.LastSweptUID)
+	}
+}
+
+// Test: retention sweep cursor lets a retry after a connection drop skip UIDs whose
+// mark+expunge was already durably checkpointed. The retry should not
+// re-issue MarkDeleted for those UIDs.
+func TestOrchestrator_RetentionSweep_CursorSkipsCompletedBatches(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	// Seed 6 messages and back them all up.
+	for i := 1; i <= 6; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <cs%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tighten policy: all 6 are deletion candidates.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// First retention sweep run: only the very first MarkDeleted across all reconnects
+	// succeeds. After that, the retry loop reconnects, the very next batch
+	// fails, no progress is made, and the orchestrator gives up — leaving the
+	// cursor at the highest UID from batch 1.
+	sharedSucceeded := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		c := connectTestIMAP(t, env.imapSrv)
+		return &sharedFailMarkClient{IMAPClient: c, allow: &sharedSucceeded, max: 1}, nil
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.LastSweptUID == 0 {
+		t.Fatal("LastSweptUID not advanced after partial retention sweep success")
+	}
+	cursorAfterFirst := f.LastSweptUID
+
+	// Second run: fresh client, observe how many UIDs MarkDeleted is asked to
+	// process. With 6 originally and ~2 already done, retry should mark only ~4.
+	var secondSpy *expungeSpyClient
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		c := connectTestIMAP(t, env.imapSrv)
+		secondSpy = &expungeSpyClient{IMAPClient: c}
+		return secondSpy, nil
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if secondSpy.markUIDsTotal >= 6 {
+		t.Errorf("second run markUIDsTotal = %d, want < 6 (cursor=%d should have filtered prior batch)",
+			secondSpy.markUIDsTotal, cursorAfterFirst)
+	}
+
+	// Final state: server is empty, cursor reset.
+	f, _ = env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if f.LastSweptUID != 0 {
+		t.Errorf("LastSweptUID after full completion = %d, want 0", f.LastSweptUID)
+	}
+}
+
+// Test: when retention computation is skipped or errors, the orchestrator must
+// not clear an in-flight last_swept_uid checkpoint. Otherwise a transient
+// upstream issue (e.g., envelope fetch fails on the next sync) would lose the
+// resume point and force the next attempt to start from UID 0.
+func TestOrchestrator_RetentionSweep_CursorPreservedWhenRetentionSkipped(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	for i := 1; i <= 4; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <pres%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drive a partial sweep so the cursor advances but never resets.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+	sharedSucceeded := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		c := connectTestIMAP(t, env.imapSrv)
+		return &sharedFailMarkClient{IMAPClient: c, allow: &sharedSucceeded, max: 1}, nil
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+	f, err := env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.LastSweptUID == 0 {
+		t.Fatal("setup: cursor should be advanced after partial sweep")
+	}
+	cursorBefore := f.LastSweptUID
+
+	// Now corrupt the policy so retention computation errors. The orchestrator
+	// must not clear the in-flight cursor in this case.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{not valid json`); err != nil {
+		t.Fatal(err)
+	}
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		return connectTestIMAP(t, env.imapSrv), nil
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err = env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.LastSweptUID != cursorBefore {
+		t.Errorf("LastSweptUID = %d, want %d (cursor must survive a run that skipped retention)",
+			f.LastSweptUID, cursorBefore)
+	}
+}
+
+// Test: a permanent IMAP server error (NO response) during retention sweep is not
+// classified as a connection error, so the retry loop does not reconnect
+// and does not re-attempt the same operation.
+func TestOrchestrator_RetentionSweep_PermanentErrorNotRetried(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	for i := 1; i <= 4; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <perm%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+
+	dialCount := 0
+	var errClient *imapErrorMarkClient
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		dialCount++
+		c := connectTestIMAP(t, env.imapSrv)
+		errClient = &imapErrorMarkClient{IMAPClient: c}
+		return errClient, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dialCount != 1 {
+		t.Errorf("dialCount = %d, want 1 (permanent error must not trigger reconnect)", dialCount)
+	}
+	if errClient.calls != 1 {
+		t.Errorf("MarkDeleted calls = %d, want 1 (must not re-attempt)", errClient.calls)
+	}
+	// Exactly one error: syncFolder must not double-record by appending
+	// internally and then letting Run append again with its folder prefix.
+	if len(result.Errors) != 1 {
+		t.Errorf("len(result.Errors) = %d, want 1; got: %v", len(result.Errors), result.Errors)
+	}
+}
+
+// Test: retention sweep connection drop is retried
 // when some deletions already succeeded (progress was made).
-func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
+func TestOrchestrator_RetentionSweep_RetryOnConnDrop(t *testing.T) {
 	env := newTestEnv(t)
 	folderID := enableFolder(t, env, "INBOX")
 	env.orchestrator.expungeBatchSize = 2
@@ -1702,21 +2016,21 @@ func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tighten policy: keep newest 1 → 4 messages subject to Wave A deletion.
+	// Tighten policy: keep newest 1 → 4 messages subject to retention sweep deletion.
 	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":1}`); err != nil {
 		t.Fatal(err)
 	}
 
-	// Second run: inject a client that fails MarkDeleted after 2 successes.
+	// Second run: inject a client that fails MarkDeleted after 1 successful
+	// batch. With ebSize=2 and 4 UIDs to delete, that means batch 1 succeeds
+	// (2 UIDs deleted), batch 2 fails — leaving 2 UIDs for the retry.
 	dialCount := 0
 	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
 		dialCount++
 		realClient := connectTestIMAP(t, env.imapSrv)
 		if dialCount <= 1 {
-			// First connection: MarkDeleted fails after 2 successful calls.
-			return &partialMarkDeleteClient{IMAPClient: realClient, succeedCount: 2}, nil
+			return &partialMarkDeleteClient{IMAPClient: realClient, succeedCount: 1}, nil
 		}
-		// Subsequent connections: work normally.
 		return realClient, nil
 	}
 
@@ -1743,13 +2057,13 @@ func TestOrchestrator_WaveA_RetryOnConnDrop(t *testing.T) {
 	}
 }
 
-// Test: Wave A connection drop with no progress stops immediately and does not
+// Test: retention sweep connection drop with no progress stops immediately and does not
 // process subsequent folders.
 //
 // ListActiveFolders has no ORDER BY, so folders are returned in reverse-insertion
 // order. We create Archive first so it is processed first, then INBOX — which
 // must not be touched after Archive gives up.
-func TestOrchestrator_WaveA_GivesUpAndStopsFolders(t *testing.T) {
+func TestOrchestrator_RetentionSweep_GivesUpAndStopsFolders(t *testing.T) {
 	env := newTestEnv(t)
 
 	// Archive is created first → processed first by the orchestrator.
@@ -1769,7 +2083,7 @@ func TestOrchestrator_WaveA_GivesUpAndStopsFolders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tighten Archive policy: all 3 messages become Wave A deletion candidates.
+	// Tighten Archive policy: all 3 messages become retention sweep deletion candidates.
 	if err := env.accountsRepo.SetFolderPolicy(folderID1, `{"leave_on_server":"newest_n","n":0}`); err != nil {
 		t.Fatal(err)
 	}
@@ -1817,7 +2131,7 @@ func TestOrchestrator_WaveA_GivesUpAndStopsFolders(t *testing.T) {
 // Test: when MarkDeleted succeeds but Expunge always fails, the retry loop
 // must not treat repeated MarkDeleted calls as "progress" and loop forever.
 // It should give up after the first failed Expunge with no real progress made.
-func TestOrchestrator_WaveA_ExpungeFailureDoesNotLoopForever(t *testing.T) {
+func TestOrchestrator_RetentionSweep_ExpungeFailureDoesNotLoopForever(t *testing.T) {
 	env := newTestEnv(t)
 	folderID := enableFolder(t, env, "INBOX")
 	env.orchestrator.expungeBatchSize = 2
@@ -1858,5 +2172,73 @@ func TestOrchestrator_WaveA_ExpungeFailureDoesNotLoopForever(t *testing.T) {
 	}
 	if len(result.Errors) == 0 {
 		t.Error("expected errors to be reported")
+	}
+}
+
+// Test: sweepErrorAsConnError converts an error to *connError only when the
+// error originated from an IMAP operation (MarkDeleted/Expunge) and is itself
+// transient. Local errors (SQL, policy parse) must propagate unchanged so the
+// retry loop does not waste a reconnect on something a reconnect can't fix.
+func TestSweepErrorAsConnError(t *testing.T) {
+	netErr := fmt.Errorf("connection reset by peer")
+	imapErr := &goiap.Error{Type: goiap.StatusResponseTypeNo, Text: "denied"}
+	dbErr := fmt.Errorf("sql: database is closed")
+
+	cases := []struct {
+		name     string
+		err      error
+		fromIMAP bool
+		wantConn bool
+	}{
+		{"nil error", nil, true, false},
+		{"network error from IMAP -> connError", netErr, true, true},
+		{"network error from IMAP, not from IMAP path -> plain", netErr, false, false},
+		{"IMAP NO response from IMAP -> plain (permanent)", imapErr, true, false},
+		{"DB error tagged from IMAP somehow -> plain (sanity)", dbErr, false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sweepErrorAsConnError(tc.err, tc.fromIMAP)
+			if tc.err == nil {
+				if got != nil {
+					t.Errorf("got %v, want nil", got)
+				}
+				return
+			}
+			var ce *connError
+			gotConn := errors.As(got, &ce)
+			if gotConn != tc.wantConn {
+				t.Errorf("connError? got %v, want %v (err=%v fromIMAP=%v)", gotConn, tc.wantConn, tc.err, tc.fromIMAP)
+			}
+		})
+	}
+}
+
+// Test: effectiveExpungeBatchSize normalizes any non-positive value to the
+// default. Without this, a negative expungeBatchSize would make the retention-
+// sweep loop non-terminating: i += ebSize with ebSize<=0 never advances past
+// the candidates length.
+func TestEffectiveExpungeBatchSize(t *testing.T) {
+	o := &Orchestrator{}
+
+	cases := []struct {
+		name string
+		set  int
+		want int
+	}{
+		{"unset (zero) -> default", 0, defaultExpungeBatchSize},
+		{"positive passed through", 25, 25},
+		{"large positive passed through", 5000, 5000},
+		{"negative -> default", -1, defaultExpungeBatchSize},
+		{"large negative -> default", -1000, defaultExpungeBatchSize},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			o.expungeBatchSize = tc.set
+			if got := o.effectiveExpungeBatchSize(); got != tc.want {
+				t.Errorf("set=%d: got %d, want %d", tc.set, got, tc.want)
+			}
+		})
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	goiap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // registers charset decoders for RFC 2047
 
@@ -43,7 +44,7 @@ type Result struct {
 	NewMessages  int
 	NewLocations int
 	NewEnvelopes int // envelope fetches count as progress for retry decisions
-	NewDeletions int // Wave A mark-deletes count as progress for retry decisions
+	NewDeletions int // messages durably removed by mark+expunge; counts as progress for retry decisions
 	Errors       []error
 }
 
@@ -63,6 +64,42 @@ const fetchBatchSize = 50
 
 const defaultExpungeBatchSize = 50
 
+// effectiveExpungeBatchSize returns the configured batch size, or the
+// default if the configured value is non-positive. The non-positive guard
+// matters because the retention-sweep loop advances by `ebSize` per
+// iteration; a zero or negative value would never terminate.
+func (o *Orchestrator) effectiveExpungeBatchSize() int {
+	if o.expungeBatchSize > 0 {
+		return o.expungeBatchSize
+	}
+	return defaultExpungeBatchSize
+}
+
+// isTransient reports whether an error looks like a connection-level failure
+// (worth reconnecting and retrying) rather than a server-side protocol
+// rejection (NO/BAD — retrying just gets the same response).
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	var imapErr *goiap.Error
+	return !errors.As(err, &imapErr)
+}
+
+// sweepErrorAsConnError wraps an error in *connError only if it originated
+// from an IMAP operation (MarkDeleted/Expunge) and looks transient. Local
+// errors (SQL, policy parse) propagate unchanged: reconnecting cannot fix
+// them, so the retry loop must not waste a no-progress budget cycle on them.
+func sweepErrorAsConnError(err error, fromIMAP bool) error {
+	if err == nil {
+		return nil
+	}
+	if fromIMAP && isTransient(err) {
+		return &connError{err: err}
+	}
+	return err
+}
+
 // connError signals that syncFolder stopped due to a connection-level failure.
 // Run uses this to decide whether reconnecting and retrying is worthwhile.
 type connError struct{ err error }
@@ -81,9 +118,9 @@ type Orchestrator struct {
 	messages            *messages.Repo
 	blobs               *blobs.Store
 	tokenRefresh        TokenRefresher
-	tokenRefreshTimeout time.Duration                                                                               // 0 = use default
-	expungeBatchSize    int                                                                                          // 0 = use default
-	dialFunc            func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
+	tokenRefreshTimeout time.Duration                                                                                 // 0 = use default
+	expungeBatchSize    int                                                                                           // 0 = use default
+	dialFunc            func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error)  // nil = use imapwrap.Dial
 	dialOAuthFunc       func(addr, user, token string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.DialOAuth
 }
 
@@ -260,10 +297,7 @@ func (o *Orchestrator) syncFolder(
 	result *Result,
 	envelopes *[]imapwrap.Envelope, // in/out: accumulated envelopes across retries
 ) error {
-	ebSize := o.expungeBatchSize
-	if ebSize == 0 {
-		ebSize = defaultExpungeBatchSize
-	}
+	ebSize := o.effectiveExpungeBatchSize()
 
 	info, err := client.SelectFolder(folder.Name)
 	if err != nil {
@@ -275,10 +309,11 @@ func (o *Orchestrator) syncFolder(
 		if err := o.messages.DeleteLocationsByFolder(folder.ID); err != nil {
 			return fmt.Errorf("clearing locations: %w", err)
 		}
-		if err := o.accounts.SetLastSeenUID(folder.ID, 0); err != nil {
-			return fmt.Errorf("resetting last_seen_uid: %w", err)
+		if err := o.accounts.ResetCursors(folder.ID); err != nil {
+			return fmt.Errorf("resetting cursors: %w", err)
 		}
 		folder.LastSeenUID = 0
+		folder.LastSweptUID = 0
 	}
 
 	if err := o.accounts.SetUIDValidity(folder.ID, info.UIDValidity); err != nil {
@@ -333,57 +368,90 @@ func (o *Orchestrator) syncFolder(
 	// messages get cleaned up even when there are no new messages to fetch.
 	// Skip retention when envelopes are incomplete — defer to next full sync.
 	var expungeSet map[uint32]bool
+	var retentionComputed bool // true when we have a complete view of the sweep this run
 	if envFetchErr == nil {
 		var retentionErr error
 		expungeSet, retentionErr = o.computeExpungeSet(folder, envs)
 		if retentionErr != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("folder %q retention: %w", folder.Name, retentionErr))
 			expungeSet = nil // disable incremental deletion on error
+		} else {
+			retentionComputed = true
 		}
 	}
 
-	// Track which UIDs are confirmed backed up (for gating deletion).
-	backedUp := make(map[uint32]bool)
-	existingLocs, _ := o.messages.ListLocationsByFolder(folder.ID)
-	for _, loc := range existingLocs {
-		backedUp[loc.UID] = true
-	}
-
-	// Mark-delete previously-backed-up messages that fall in the expunge set.
-	var deletesSinceExpunge int
-	var waveAErr error
+	// Retention sweep: mark-delete previously-backed-up messages that fall in
+	// the expunge set. Process in chunks aligned with the EXPUNGE cadence: each
+	// chunk is one SQL filter ("of these UIDs, which are backed up?") + one
+	// MarkDeleted + one Expunge + one cursor checkpoint. The backed-up gating
+	// step happens per chunk, so this loop does not hold all backed-up matches
+	// for the sweep in memory at once. (computeExpungeSet above does still load
+	// every location row to evaluate the retention policy — a separate concern
+	// from the per-chunk gating optimized here.)
+	candidates := make([]uint32, 0, len(expungeSet))
 	for uid := range expungeSet {
-		if !backedUp[uid] {
-			continue
+		if uid > folder.LastSweptUID {
+			candidates = append(candidates, uid)
 		}
-		if err := client.MarkDeleted([]uint32{uid}); err != nil {
-			waveAErr = fmt.Errorf("mark deleted UID %d: %w", uid, err)
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
+
+	var deletesSinceExpunge int
+	var sweepErr error
+	var sweepErrFromIMAP bool // true iff sweepErr came from MarkDeleted or Expunge
+	for i := 0; i < len(candidates); i += ebSize {
+		end := i + ebSize
+		if end > len(candidates) {
+			end = len(candidates)
+		}
+		chunk := candidates[i:end]
+		backedUp, err := o.messages.FilterBackedUpUIDs(folder.ID, chunk)
+		if err != nil {
+			sweepErr = fmt.Errorf("filter backed-up uids: %w", err)
 			break
 		}
-		deletesSinceExpunge++
-		if deletesSinceExpunge >= ebSize {
-			if err := client.Expunge(); err != nil {
-				waveAErr = fmt.Errorf("expunge: %w", err)
+		highest := chunk[len(chunk)-1] // advance cursor past the whole chunk
+		if len(backedUp) > 0 {
+			if err := client.MarkDeleted(backedUp); err != nil {
+				sweepErr = fmt.Errorf("mark deleted: %w", err)
+				sweepErrFromIMAP = true
 				break
 			}
-			result.NewDeletions += deletesSinceExpunge
-			deletesSinceExpunge = 0
+			if err := client.Expunge(); err != nil {
+				sweepErr = fmt.Errorf("expunge: %w", err)
+				sweepErrFromIMAP = true
+				break
+			}
+			result.NewDeletions += len(backedUp)
 		}
+		if err := o.accounts.SetLastSweptUID(folder.ID, highest); err != nil {
+			sweepErr = fmt.Errorf("persist last_swept_uid: %w", err)
+			break
+		}
+		folder.LastSweptUID = highest
 	}
 
-	if waveAErr != nil {
-		result.Errors = append(result.Errors, waveAErr)
-		return &connError{err: waveAErr}
+	if sweepErr != nil {
+		// Don't append to result.Errors here — Run() records the error once,
+		// either with a "folder %q:" prefix (non-connError) or a "folder %q:
+		// no progress, giving up:" prefix (connError that exhausted retries).
+		// Appending here would produce duplicate entries.
+		return sweepErrorAsConnError(sweepErr, sweepErrFromIMAP)
+	}
+
+	// Reset the cursor only when this run had a complete picture of retention
+	// (envelope fetch + policy both succeeded) and the sweep loop finished
+	// without error. Otherwise we'd erase a valid checkpoint left by a prior
+	// partial sweep just because envelope fetch transiently failed.
+	if retentionComputed && folder.LastSweptUID != 0 {
+		if err := o.accounts.SetLastSweptUID(folder.ID, 0); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("clearing last_swept_uid: %w", err))
+		} else {
+			folder.LastSweptUID = 0
+		}
 	}
 
 	if len(envs) == 0 {
-		if deletesSinceExpunge > 0 {
-			if err := client.Expunge(); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("expunge: %w", err))
-				return &connError{err: err}
-			}
-			result.NewDeletions += deletesSinceExpunge
-		}
 		return nil
 	}
 

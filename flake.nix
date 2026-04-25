@@ -51,6 +51,7 @@
             # Go toolchain
             go
             gopls
+            gotools  # goimports, stringer, etc. from golang.org/x/tools
             delve
 
             # Linting

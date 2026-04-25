@@ -50,14 +50,15 @@ func (a *Account) IsOAuth() bool {
 
 // Folder represents an IMAP folder within an account.
 type Folder struct {
-	ID          int64
-	AccountID   int64
-	Name        string
-	Enabled     bool
-	UIDValidity *uint32
-	LastSeenUID uint32
-	PolicyJSON  string
-	OnServer    bool
+	ID           int64
+	AccountID    int64
+	Name         string
+	Enabled      bool
+	UIDValidity  *uint32
+	LastSeenUID  uint32
+	PolicyJSON   string
+	OnServer     bool
+	LastSweptUID uint32
 }
 
 // Repo manages IMAP accounts and folders in SQLite.
@@ -303,7 +304,7 @@ func (r *Repo) ListActiveFolders(accountID int64) ([]*Folder, error) {
 }
 
 func (r *Repo) listFolders(accountID int64, activeOnly bool) ([]*Folder, error) {
-	query := `SELECT id, account_id, name, enabled, uid_validity, last_seen_uid, policy_json, on_server
+	query := `SELECT id, account_id, name, enabled, uid_validity, last_seen_uid, policy_json, on_server, last_swept_uid
 		 FROM imap_folders WHERE account_id = ?`
 	if activeOnly {
 		query += ` AND on_server = 1`
@@ -317,7 +318,7 @@ func (r *Repo) listFolders(accountID int64, activeOnly bool) ([]*Folder, error) 
 	var folders []*Folder
 	for rows.Next() {
 		var f Folder
-		if err := rows.Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON, &f.OnServer); err != nil {
+		if err := rows.Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON, &f.OnServer, &f.LastSweptUID); err != nil {
 			return nil, fmt.Errorf("scanning folder: %w", err)
 		}
 		folders = append(folders, &f)
@@ -364,12 +365,12 @@ func (r *Repo) MarkFoldersOffServer(accountID int64, serverNames []string) error
 func (r *Repo) GetFolderByID(folderID, userID int64) (*Folder, error) {
 	var f Folder
 	err := r.db.QueryRow(
-		`SELECT f.id, f.account_id, f.name, f.enabled, f.uid_validity, f.last_seen_uid, f.policy_json, f.on_server
+		`SELECT f.id, f.account_id, f.name, f.enabled, f.uid_validity, f.last_seen_uid, f.policy_json, f.on_server, f.last_swept_uid
 		 FROM imap_folders f
 		 JOIN imap_accounts a ON a.id = f.account_id
 		 WHERE f.id = ? AND a.user_id = ?`,
 		folderID, userID,
-	).Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON, &f.OnServer)
+	).Scan(&f.ID, &f.AccountID, &f.Name, &f.Enabled, &f.UIDValidity, &f.LastSeenUID, &f.PolicyJSON, &f.OnServer, &f.LastSweptUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting folder by id: %w", err)
 	}
@@ -399,6 +400,33 @@ func (r *Repo) SetLastSeenUID(folderID int64, uid uint32) error {
 	_, err := r.db.Exec("UPDATE imap_folders SET last_seen_uid = ? WHERE id = ?", uid, folderID)
 	if err != nil {
 		return fmt.Errorf("updating last_seen_uid: %w", err)
+	}
+	return nil
+}
+
+// SetLastSweptUID updates the retention-sweep progress cursor for a folder.
+// The cursor is the highest UID the in-flight retention sweep has evaluated;
+// 0 indicates no sweep is in progress (either never started or just completed).
+func (r *Repo) SetLastSweptUID(folderID int64, uid uint32) error {
+	_, err := r.db.Exec("UPDATE imap_folders SET last_swept_uid = ? WHERE id = ?", uid, folderID)
+	if err != nil {
+		return fmt.Errorf("updating last_swept_uid: %w", err)
+	}
+	return nil
+}
+
+// ResetCursors atomically zeros every progress cursor in the folder's
+// cursor family (last_seen_uid, last_swept_uid). Use this whenever the
+// folder's UID space is invalidated (UIDVALIDITY change, manual resync) so
+// the cursor pair is updated in a single statement — separate UPDATEs would
+// leave the pair inconsistent if the process crashes between them.
+func (r *Repo) ResetCursors(folderID int64) error {
+	_, err := r.db.Exec(
+		"UPDATE imap_folders SET last_seen_uid = 0, last_swept_uid = 0 WHERE id = ?",
+		folderID,
+	)
+	if err != nil {
+		return fmt.Errorf("resetting folder cursors: %w", err)
 	}
 	return nil
 }

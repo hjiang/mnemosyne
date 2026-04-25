@@ -323,6 +323,41 @@ func (r *Repo) ListLocationsByFolder(folderID int64) ([]Location, error) {
 	return locs, rows.Err()
 }
 
+// FilterBackedUpUIDs returns the subset of the input UIDs that have a location
+// row in the given folder, in ascending order. Used by the retention-sweep
+// deletion loop to gate per-batch ("only delete from server what we've
+// durably backed up") without loading the entire location set into memory.
+func (r *Repo) FilterBackedUpUIDs(folderID int64, uids []uint32) ([]uint32, error) {
+	if len(uids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(uids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(uids)+1)
+	args = append(args, folderID)
+	for _, u := range uids {
+		args = append(args, u)
+	}
+	//nolint:gosec // placeholders are generated from len(uids); all values parameterized
+	rows, err := r.db.Query(
+		`SELECT uid FROM message_locations WHERE folder_id = ? AND uid IN (`+placeholders+`) ORDER BY uid`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("filtering backed-up uids: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []uint32
+	for rows.Next() {
+		var uid uint32
+		if err := rows.Scan(&uid); err != nil {
+			return nil, fmt.Errorf("scanning uid: %w", err)
+		}
+		out = append(out, uid)
+	}
+	return out, rows.Err()
+}
+
 // DeleteLocationsByFolder removes all locations for a folder (used on UIDVALIDITY reset).
 func (r *Repo) DeleteLocationsByFolder(folderID int64) error {
 	_, err := r.db.Exec("DELETE FROM message_locations WHERE folder_id = ?", folderID)
