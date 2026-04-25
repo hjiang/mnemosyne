@@ -1885,6 +1885,69 @@ func TestOrchestrator_RetentionSweep_CursorSkipsCompletedBatches(t *testing.T) {
 	}
 }
 
+// Test: when retention computation is skipped or errors, the orchestrator must
+// not clear an in-flight last_swept_uid checkpoint. Otherwise a transient
+// upstream issue (e.g., envelope fetch fails on the next sync) would lose the
+// resume point and force the next attempt to start from UID 0.
+func TestOrchestrator_RetentionSweep_CursorPreservedWhenRetentionSkipped(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	for i := 1; i <= 4; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <pres%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drive a partial sweep so the cursor advances but never resets.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+	sharedSucceeded := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		c := connectTestIMAP(t, env.imapSrv)
+		return &sharedFailMarkClient{IMAPClient: c, allow: &sharedSucceeded, max: 1}, nil
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+	f, err := env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.LastSweptUID == 0 {
+		t.Fatal("setup: cursor should be advanced after partial sweep")
+	}
+	cursorBefore := f.LastSweptUID
+
+	// Now corrupt the policy so retention computation errors. The orchestrator
+	// must not clear the in-flight cursor in this case.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{not valid json`); err != nil {
+		t.Fatal(err)
+	}
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		return connectTestIMAP(t, env.imapSrv), nil
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err = env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.LastSweptUID != cursorBefore {
+		t.Errorf("LastSweptUID = %d, want %d (cursor must survive a run that skipped retention)",
+			f.LastSweptUID, cursorBefore)
+	}
+}
+
 // Test: a permanent IMAP server error (NO response) during retention sweep is not
 // classified as a connection error, so the retry loop does not reconnect
 // and does not re-attempt the same operation.

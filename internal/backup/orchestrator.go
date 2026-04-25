@@ -44,7 +44,7 @@ type Result struct {
 	NewMessages  int
 	NewLocations int
 	NewEnvelopes int // envelope fetches count as progress for retry decisions
-	NewDeletions int // mark+expunge cycles that durably removed messages; counts as progress for retry decisions
+	NewDeletions int // messages durably removed by mark+expunge; counts as progress for retry decisions
 	Errors       []error
 }
 
@@ -349,12 +349,15 @@ func (o *Orchestrator) syncFolder(
 	// messages get cleaned up even when there are no new messages to fetch.
 	// Skip retention when envelopes are incomplete — defer to next full sync.
 	var expungeSet map[uint32]bool
+	var retentionComputed bool // true when we have a complete view of the sweep this run
 	if envFetchErr == nil {
 		var retentionErr error
 		expungeSet, retentionErr = o.computeExpungeSet(folder, envs)
 		if retentionErr != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("folder %q retention: %w", folder.Name, retentionErr))
 			expungeSet = nil // disable incremental deletion on error
+		} else {
+			retentionComputed = true
 		}
 	}
 
@@ -411,8 +414,11 @@ func (o *Orchestrator) syncFolder(
 		return sweepErr
 	}
 
-	// Sweep finished cleanly — reset the cursor so the next sync starts fresh.
-	if folder.LastSweptUID != 0 {
+	// Reset the cursor only when this run had a complete picture of retention
+	// (envelope fetch + policy both succeeded) and the sweep loop finished
+	// without error. Otherwise we'd erase a valid checkpoint left by a prior
+	// partial sweep just because envelope fetch transiently failed.
+	if retentionComputed && folder.LastSweptUID != 0 {
 		if err := o.accounts.SetLastSweptUID(folder.ID, 0); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("clearing last_swept_uid: %w", err))
 		} else {
