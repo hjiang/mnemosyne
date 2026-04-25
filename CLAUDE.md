@@ -62,6 +62,16 @@ func (r *Repo) GetByID(id, userID int64) (*Widget, error) {
 }
 ```
 
+### Cursor families
+
+Folder progress cursors come in pairs/groups: `last_seen_uid` (fetch progress)
+and `last_swept_uid` (in-flight retention sweep) describe two phases of one
+logical pipeline through the same UID space. Treat them as a family: any
+handler or migration that resets one must reset all siblings unless there is a
+specific, documented reason not to. The folder-resync handler
+(`internal/httpserver/accounts.go`) is the canonical example. New cursor
+columns should be added to this list when introduced.
+
 ### Crash-Safe Write Ordering
 
 The backup pipeline writes in this order: **blob -> message row -> location row**. This guarantees that if the process crashes between steps, the next run recovers safely via idempotent inserts (`ON CONFLICT DO NOTHING`). Never reorder these steps.
