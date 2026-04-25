@@ -210,11 +210,7 @@ func (s *Server) folderResync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.accounts.SetLastSeenUID(folderID, 0); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if err := s.accounts.SetLastSweptUID(folderID, 0); err != nil {
+	if err := s.accounts.ResetCursors(folderID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

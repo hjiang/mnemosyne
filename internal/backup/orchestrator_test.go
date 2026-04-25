@@ -1990,8 +1990,10 @@ func TestOrchestrator_RetentionSweep_PermanentErrorNotRetried(t *testing.T) {
 	if errClient.calls != 1 {
 		t.Errorf("MarkDeleted calls = %d, want 1 (must not re-attempt)", errClient.calls)
 	}
-	if len(result.Errors) == 0 {
-		t.Error("expected error to be reported")
+	// Exactly one error: syncFolder must not double-record by appending
+	// internally and then letting Run append again with its folder prefix.
+	if len(result.Errors) != 1 {
+		t.Errorf("len(result.Errors) = %d, want 1; got: %v", len(result.Errors), result.Errors)
 	}
 }
 

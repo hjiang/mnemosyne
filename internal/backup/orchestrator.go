@@ -301,11 +301,8 @@ func (o *Orchestrator) syncFolder(
 		if err := o.messages.DeleteLocationsByFolder(folder.ID); err != nil {
 			return fmt.Errorf("clearing locations: %w", err)
 		}
-		if err := o.accounts.SetLastSeenUID(folder.ID, 0); err != nil {
-			return fmt.Errorf("resetting last_seen_uid: %w", err)
-		}
-		if err := o.accounts.SetLastSweptUID(folder.ID, 0); err != nil {
-			return fmt.Errorf("resetting last_swept_uid: %w", err)
+		if err := o.accounts.ResetCursors(folder.ID); err != nil {
+			return fmt.Errorf("resetting cursors: %w", err)
 		}
 		folder.LastSeenUID = 0
 		folder.LastSweptUID = 0
@@ -427,7 +424,10 @@ func (o *Orchestrator) syncFolder(
 	}
 
 	if sweepErr != nil {
-		result.Errors = append(result.Errors, sweepErr)
+		// Don't append to result.Errors here — Run() records the error once,
+		// either with a "folder %q:" prefix (non-connError) or a "folder %q:
+		// no progress, giving up:" prefix (connError that exhausted retries).
+		// Appending here would produce duplicate entries.
 		return sweepErrorAsConnError(sweepErr, sweepErrFromIMAP)
 	}
 

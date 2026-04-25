@@ -415,6 +415,22 @@ func (r *Repo) SetLastSweptUID(folderID int64, uid uint32) error {
 	return nil
 }
 
+// ResetCursors atomically zeros every progress cursor in the folder's
+// cursor family (last_seen_uid, last_swept_uid). Use this whenever the
+// folder's UID space is invalidated (UIDVALIDITY change, manual resync) so
+// the cursor pair is updated in a single statement — separate UPDATEs would
+// leave the pair inconsistent if the process crashes between them.
+func (r *Repo) ResetCursors(folderID int64) error {
+	_, err := r.db.Exec(
+		"UPDATE imap_folders SET last_seen_uid = 0, last_swept_uid = 0 WHERE id = ?",
+		folderID,
+	)
+	if err != nil {
+		return fmt.Errorf("resetting folder cursors: %w", err)
+	}
+	return nil
+}
+
 // SetFolderPolicy updates the retention policy JSON for a folder.
 func (r *Repo) SetFolderPolicy(folderID int64, policyJSON string) error {
 	_, err := r.db.Exec("UPDATE imap_folders SET policy_json = ? WHERE id = ?", policyJSON, folderID)
