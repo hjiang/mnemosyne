@@ -9,9 +9,9 @@ import (
 )
 
 type testEnv struct {
-	repo   *Repo
-	userA  int64
-	userB  int64
+	repo  *Repo
+	userA int64
+	userB int64
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -188,6 +188,33 @@ func TestSetLastSeenUID(t *testing.T) {
 	folders, _ := env.repo.ListFolders(acct.ID)
 	if folders[0].LastSeenUID != 42 {
 		t.Errorf("LastSeenUID = %d, want 42", folders[0].LastSeenUID)
+	}
+}
+
+func TestSetWaveACursor(t *testing.T) {
+	env := newTestEnv(t)
+	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
+	folder, _ := env.repo.CreateFolder(acct.ID, "INBOX")
+
+	if folder.WaveACursor != 0 {
+		t.Errorf("initial WaveACursor = %d, want 0", folder.WaveACursor)
+	}
+
+	if err := env.repo.SetWaveACursor(folder.ID, 1234); err != nil {
+		t.Fatal(err)
+	}
+
+	folders, _ := env.repo.ListFolders(acct.ID)
+	if folders[0].WaveACursor != 1234 {
+		t.Errorf("WaveACursor = %d, want 1234", folders[0].WaveACursor)
+	}
+
+	if err := env.repo.SetWaveACursor(folder.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := env.repo.GetFolderByID(folder.ID, env.userA)
+	if got.WaveACursor != 0 {
+		t.Errorf("WaveACursor after reset = %d, want 0", got.WaveACursor)
 	}
 }
 
@@ -576,9 +603,9 @@ func TestMarkFoldersOffServer(t *testing.T) {
 	env := newTestEnv(t)
 	acct, _ := env.repo.Create(env.userA, "Test", "host", 993, "a", "pass", true, "", 0, "", "")
 
-	env.repo.CreateFolder(acct.ID, "INBOX")    //nolint:errcheck,gosec
-	env.repo.CreateFolder(acct.ID, "Sent")     //nolint:errcheck,gosec
-	env.repo.CreateFolder(acct.ID, "Drafts")   //nolint:errcheck,gosec
+	env.repo.CreateFolder(acct.ID, "INBOX")  //nolint:errcheck,gosec
+	env.repo.CreateFolder(acct.ID, "Sent")   //nolint:errcheck,gosec
+	env.repo.CreateFolder(acct.ID, "Drafts") //nolint:errcheck,gosec
 
 	// Mark "Sent" as no longer on server.
 	if err := env.repo.MarkFoldersOffServer(acct.ID, []string{"INBOX", "Drafts"}); err != nil {

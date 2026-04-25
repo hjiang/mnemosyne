@@ -81,9 +81,9 @@ type Orchestrator struct {
 	messages            *messages.Repo
 	blobs               *blobs.Store
 	tokenRefresh        TokenRefresher
-	tokenRefreshTimeout time.Duration                                                                               // 0 = use default
-	expungeBatchSize    int                                                                                          // 0 = use default
-	dialFunc            func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.Dial
+	tokenRefreshTimeout time.Duration                                                                                 // 0 = use default
+	expungeBatchSize    int                                                                                           // 0 = use default
+	dialFunc            func(addr, user, pass string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error)  // nil = use imapwrap.Dial
 	dialOAuthFunc       func(addr, user, token string, tls bool, proxyConf *imapwrap.ProxyConfig) (IMAPClient, error) // nil = use imapwrap.DialOAuth
 }
 
@@ -278,7 +278,11 @@ func (o *Orchestrator) syncFolder(
 		if err := o.accounts.SetLastSeenUID(folder.ID, 0); err != nil {
 			return fmt.Errorf("resetting last_seen_uid: %w", err)
 		}
+		if err := o.accounts.SetWaveACursor(folder.ID, 0); err != nil {
+			return fmt.Errorf("resetting wave_a_cursor: %w", err)
+		}
 		folder.LastSeenUID = 0
+		folder.WaveACursor = 0
 	}
 
 	if err := o.accounts.SetUIDValidity(folder.ID, info.UIDValidity); err != nil {
@@ -351,11 +355,15 @@ func (o *Orchestrator) syncFolder(
 
 	// Wave A: mark-delete previously-backed-up messages that fall in the expunge
 	// set. Process in batches aligned with the EXPUNGE cadence: each batch is one
-	// MarkDeleted + one Expunge, so every successful cycle is a single atomic
-	// checkpoint of `ebSize` deletions.
+	// MarkDeleted + one Expunge + one cursor checkpoint, so every successful
+	// cycle is a single atomic unit of progress. After a connection drop, the
+	// cursor lets the next attempt skip UIDs that are already \Deleted on the
+	// server (idempotent on the wire, but the skip saves the round-trip and,
+	// more importantly, gives the retry loop a way to observe progress between
+	// attempts).
 	toDelete := make([]uint32, 0, len(expungeSet))
 	for uid := range expungeSet {
-		if backedUp[uid] {
+		if backedUp[uid] && uid > folder.WaveACursor {
 			toDelete = append(toDelete, uid)
 		}
 	}
@@ -377,12 +385,27 @@ func (o *Orchestrator) syncFolder(
 			waveAErr = fmt.Errorf("expunge: %w", err)
 			break
 		}
+		highest := batch[len(batch)-1] // sorted ascending
+		if err := o.accounts.SetWaveACursor(folder.ID, highest); err != nil {
+			waveAErr = fmt.Errorf("persist wave_a_cursor: %w", err)
+			break
+		}
+		folder.WaveACursor = highest
 		result.NewDeletions += len(batch)
 	}
 
 	if waveAErr != nil {
 		result.Errors = append(result.Errors, waveAErr)
 		return &connError{err: waveAErr}
+	}
+
+	// Wave A swept clean — reset the cursor so the next sync starts fresh.
+	if folder.WaveACursor != 0 {
+		if err := o.accounts.SetWaveACursor(folder.ID, 0); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("clearing wave_a_cursor: %w", err))
+		} else {
+			folder.WaveACursor = 0
+		}
 	}
 
 	if len(envs) == 0 {

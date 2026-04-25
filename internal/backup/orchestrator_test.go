@@ -1523,6 +1523,23 @@ func TestRun_OAuthTokenRefreshTimeout(t *testing.T) {
 	}
 }
 
+// sharedFailMarkClient lets only the first `max` MarkDeleted calls (counted
+// via a shared counter across dials) succeed; subsequent calls fail. Used to
+// simulate a connection that drops mid-Wave-A even after reconnect.
+type sharedFailMarkClient struct {
+	IMAPClient
+	allow *int
+	max   int
+}
+
+func (s *sharedFailMarkClient) MarkDeleted(uids []uint32) error {
+	if *s.allow >= s.max {
+		return fmt.Errorf("connection reset by peer")
+	}
+	*s.allow++
+	return s.IMAPClient.MarkDeleted(uids)
+}
+
 // failingExpungeClient wraps an IMAPClient where MarkDeleted always succeeds
 // but Expunge always fails, simulating a connection that dies exactly at flush time.
 type failingExpungeClient struct {
@@ -1746,6 +1763,111 @@ func TestOrchestrator_WaveA_BatchesMarkDeleted(t *testing.T) {
 	}
 	if spy.expungeCalls != 2 {
 		t.Errorf("expungeCalls = %d, want 2 (one per batch)", spy.expungeCalls)
+	}
+}
+
+// Test: after Wave A succeeds completely, the cursor is reset to 0 so the
+// next sync starts fresh; while in progress, the cursor records the highest
+// successfully-checkpointed UID.
+func TestOrchestrator_WaveA_CursorLifecycle(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	for i := 1; i <= 4; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <cur%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.WaveACursor != 0 {
+		t.Errorf("WaveACursor after full sweep = %d, want 0", f.WaveACursor)
+	}
+}
+
+// Test: Wave A cursor lets a retry after a connection drop skip UIDs whose
+// mark+expunge was already durably checkpointed. The retry should not
+// re-issue MarkDeleted for those UIDs.
+func TestOrchestrator_WaveA_CursorSkipsCompletedBatches(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	// Seed 6 messages and back them all up.
+	for i := 1; i <= 6; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <cs%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tighten policy: all 6 are deletion candidates.
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// First Wave A run: only the very first MarkDeleted across all reconnects
+	// succeeds. After that, the retry loop reconnects, the very next batch
+	// fails, no progress is made, and the orchestrator gives up — leaving the
+	// cursor at the highest UID from batch 1.
+	sharedSucceeded := 0
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		c := connectTestIMAP(t, env.imapSrv)
+		return &sharedFailMarkClient{IMAPClient: c, allow: &sharedSucceeded, max: 1}, nil
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.WaveACursor == 0 {
+		t.Fatal("WaveACursor not advanced after partial Wave A success")
+	}
+	cursorAfterFirst := f.WaveACursor
+
+	// Second run: fresh client, observe how many UIDs MarkDeleted is asked to
+	// process. With 6 originally and ~2 already done, retry should mark only ~4.
+	var secondSpy *expungeSpyClient
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		c := connectTestIMAP(t, env.imapSrv)
+		secondSpy = &expungeSpyClient{IMAPClient: c}
+		return secondSpy, nil
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if secondSpy.markUIDsTotal >= 6 {
+		t.Errorf("second run markUIDsTotal = %d, want < 6 (cursor=%d should have filtered prior batch)",
+			secondSpy.markUIDsTotal, cursorAfterFirst)
+	}
+
+	// Final state: server is empty, cursor reset.
+	f, _ = env.accountsRepo.GetFolderByID(folderID, env.userID)
+	if f.WaveACursor != 0 {
+		t.Errorf("WaveACursor after full completion = %d, want 0", f.WaveACursor)
 	}
 }
 
