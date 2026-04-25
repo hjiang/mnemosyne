@@ -22,11 +22,11 @@ func newTestRepo(t *testing.T) *Repo {
 	}
 
 	// Create two users and an account+folder for testing.
-	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "a@test.com", "h", 0) //nolint:errcheck,gosec
-	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "b@test.com", "h", 0) //nolint:errcheck,gosec
+	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "a@test.com", "h", 0)                                         //nolint:errcheck,gosec
+	database.Exec("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)", "b@test.com", "h", 0)                                         //nolint:errcheck,gosec
 	database.Exec("INSERT INTO imap_accounts (user_id, label, host, port, username, password_enc, use_tls) VALUES (1, 'test', 'h', 993, 'u', x'00', 1)") //nolint:errcheck,gosec
-	database.Exec("INSERT INTO imap_folders (account_id, name) VALUES (1, 'INBOX')")                                                                      //nolint:errcheck,gosec
-	database.Exec("INSERT INTO imap_folders (account_id, name) VALUES (1, 'Archive')")                                                                    //nolint:errcheck,gosec
+	database.Exec("INSERT INTO imap_folders (account_id, name) VALUES (1, 'INBOX')")                                                                     //nolint:errcheck,gosec
+	database.Exec("INSERT INTO imap_folders (account_id, name) VALUES (1, 'Archive')")                                                                   //nolint:errcheck,gosec
 
 	return NewRepo(database)
 }
@@ -140,6 +140,49 @@ func TestLocationExistsByFolderAndUID(t *testing.T) {
 	}
 	if exists {
 		t.Error("expected location to not exist for different folder")
+	}
+}
+
+func TestFilterBackedUpUIDs(t *testing.T) {
+	repo := newTestRepo(t)
+	hash := testHash("filter-backedup-test")
+	date := int64(1700000000)
+	_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "t", Date: &date, Size: 10})
+	for _, uid := range []uint32{2, 5, 10, 20} {
+		_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: uid})
+	}
+
+	// Empty input.
+	got, err := repo.FilterBackedUpUIDs(1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty input: got %v, want empty", got)
+	}
+
+	// Mixed: some present, some not.
+	got, err = repo.FilterBackedUpUIDs(1, []uint32{1, 2, 3, 5, 7, 10, 11, 20, 21})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []uint32{2, 5, 10, 20}
+	if len(got) != len(want) {
+		t.Fatalf("len(got) = %d, want %d (got=%v)", len(got), len(want), got)
+	}
+	for i, u := range want {
+		if got[i] != u {
+			t.Errorf("got[%d] = %d, want %d (full got=%v)", i, got[i], u, got)
+		}
+	}
+
+	// Wrong folder → nothing.
+	got, err = repo.FilterBackedUpUIDs(999, []uint32{2, 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("wrong folder: got %v, want empty", got)
 	}
 }
 

@@ -346,52 +346,49 @@ func (o *Orchestrator) syncFolder(
 		}
 	}
 
-	// Track which UIDs are confirmed backed up (for gating deletion).
-	backedUp := make(map[uint32]bool)
-	existingLocs, _ := o.messages.ListLocationsByFolder(folder.ID)
-	for _, loc := range existingLocs {
-		backedUp[loc.UID] = true
-	}
-
 	// Wave A: mark-delete previously-backed-up messages that fall in the expunge
-	// set. Process in batches aligned with the EXPUNGE cadence: each batch is one
-	// MarkDeleted + one Expunge + one cursor checkpoint, so every successful
-	// cycle is a single atomic unit of progress. After a connection drop, the
-	// cursor lets the next attempt skip UIDs that are already \Deleted on the
-	// server (idempotent on the wire, but the skip saves the round-trip and,
-	// more importantly, gives the retry loop a way to observe progress between
-	// attempts).
-	toDelete := make([]uint32, 0, len(expungeSet))
+	// set. Process in chunks aligned with the EXPUNGE cadence: each chunk is one
+	// SQL filter ("of these UIDs, which are backed up?") + one MarkDeleted + one
+	// Expunge + one cursor checkpoint. Backed-up gating happens per chunk so we
+	// never load the full folder's locations into memory.
+	candidates := make([]uint32, 0, len(expungeSet))
 	for uid := range expungeSet {
-		if backedUp[uid] && uid > folder.WaveACursor {
-			toDelete = append(toDelete, uid)
+		if uid > folder.WaveACursor {
+			candidates = append(candidates, uid)
 		}
 	}
-	sort.Slice(toDelete, func(i, j int) bool { return toDelete[i] < toDelete[j] })
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
 
 	var deletesSinceExpunge int
 	var waveAErr error
-	for i := 0; i < len(toDelete); i += ebSize {
+	for i := 0; i < len(candidates); i += ebSize {
 		end := i + ebSize
-		if end > len(toDelete) {
-			end = len(toDelete)
+		if end > len(candidates) {
+			end = len(candidates)
 		}
-		batch := toDelete[i:end]
-		if err := client.MarkDeleted(batch); err != nil {
-			waveAErr = fmt.Errorf("mark deleted: %w", err)
+		chunk := candidates[i:end]
+		backedUp, err := o.messages.FilterBackedUpUIDs(folder.ID, chunk)
+		if err != nil {
+			waveAErr = fmt.Errorf("filter backed-up uids: %w", err)
 			break
 		}
-		if err := client.Expunge(); err != nil {
-			waveAErr = fmt.Errorf("expunge: %w", err)
-			break
+		highest := chunk[len(chunk)-1] // advance cursor past the whole chunk
+		if len(backedUp) > 0 {
+			if err := client.MarkDeleted(backedUp); err != nil {
+				waveAErr = fmt.Errorf("mark deleted: %w", err)
+				break
+			}
+			if err := client.Expunge(); err != nil {
+				waveAErr = fmt.Errorf("expunge: %w", err)
+				break
+			}
+			result.NewDeletions += len(backedUp)
 		}
-		highest := batch[len(batch)-1] // sorted ascending
 		if err := o.accounts.SetWaveACursor(folder.ID, highest); err != nil {
 			waveAErr = fmt.Errorf("persist wave_a_cursor: %w", err)
 			break
 		}
 		folder.WaveACursor = highest
-		result.NewDeletions += len(batch)
 	}
 
 	if waveAErr != nil {
