@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	goiap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // registers charset decoders for RFC 2047
 
@@ -62,6 +63,17 @@ type IMAPClient interface {
 const fetchBatchSize = 50
 
 const defaultExpungeBatchSize = 50
+
+// isTransient reports whether an error looks like a connection-level failure
+// (worth reconnecting and retrying) rather than a server-side protocol
+// rejection (NO/BAD — retrying just gets the same response).
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	var imapErr *goiap.Error
+	return !errors.As(err, &imapErr)
+}
 
 // connError signals that syncFolder stopped due to a connection-level failure.
 // Run uses this to decide whether reconnecting and retrying is worthwhile.
@@ -393,7 +405,10 @@ func (o *Orchestrator) syncFolder(
 
 	if waveAErr != nil {
 		result.Errors = append(result.Errors, waveAErr)
-		return &connError{err: waveAErr}
+		if isTransient(waveAErr) {
+			return &connError{err: waveAErr}
+		}
+		return waveAErr
 	}
 
 	// Wave A swept clean — reset the cursor so the next sync starts fresh.

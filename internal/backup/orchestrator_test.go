@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	goiap "github.com/emersion/go-imap/v2"
+
 	"github.com/hjiang/mnemosyne/internal/accounts"
 	imapwrap "github.com/hjiang/mnemosyne/internal/backup/imap"
 	"github.com/hjiang/mnemosyne/internal/blobs"
@@ -1523,6 +1525,18 @@ func TestRun_OAuthTokenRefreshTimeout(t *testing.T) {
 	}
 }
 
+// imapErrorMarkClient returns an *imap.Error (server NO response) on every
+// MarkDeleted call, simulating a permanent protocol-level rejection.
+type imapErrorMarkClient struct {
+	IMAPClient
+	calls int
+}
+
+func (c *imapErrorMarkClient) MarkDeleted(_ []uint32) error {
+	c.calls++
+	return &goiap.Error{Type: goiap.StatusResponseTypeNo, Text: "permission denied"}
+}
+
 // sharedFailMarkClient lets only the first `max` MarkDeleted calls (counted
 // via a shared counter across dials) succeed; subsequent calls fail. Used to
 // simulate a connection that drops mid-Wave-A even after reconnect.
@@ -1868,6 +1882,53 @@ func TestOrchestrator_WaveA_CursorSkipsCompletedBatches(t *testing.T) {
 	f, _ = env.accountsRepo.GetFolderByID(folderID, env.userID)
 	if f.WaveACursor != 0 {
 		t.Errorf("WaveACursor after full completion = %d, want 0", f.WaveACursor)
+	}
+}
+
+// Test: a permanent IMAP server error (NO response) during Wave A is not
+// classified as a connection error, so the retry loop does not reconnect
+// and does not re-attempt the same operation.
+func TestOrchestrator_WaveA_PermanentErrorNotRetried(t *testing.T) {
+	env := newTestEnv(t)
+	folderID := enableFolder(t, env, "INBOX")
+	env.orchestrator.expungeBatchSize = 2
+
+	for i := 1; i <= 4; i++ {
+		raw := fmt.Sprintf(
+			"From: s@test.com\r\nTo: r@test.com\r\nSubject: msg %d\r\nMessage-ID: <perm%d@test>\r\nDate: Mon, 0%d Jan 2024 00:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nBody %d\r\n",
+			i, i, i, i,
+		)
+		env.imapSrv.AppendMessage(t, "INBOX", []byte(raw))
+	}
+	if _, err := env.orchestrator.Run(env.accountID, env.userID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := env.accountsRepo.SetFolderPolicy(folderID, `{"leave_on_server":"newest_n","n":0}`); err != nil {
+		t.Fatal(err)
+	}
+
+	dialCount := 0
+	var errClient *imapErrorMarkClient
+	env.orchestrator.dialFunc = func(_, _, _ string, _ bool, _ *imapwrap.ProxyConfig) (IMAPClient, error) {
+		dialCount++
+		c := connectTestIMAP(t, env.imapSrv)
+		errClient = &imapErrorMarkClient{IMAPClient: c}
+		return errClient, nil
+	}
+
+	result, err := env.orchestrator.Run(env.accountID, env.userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dialCount != 1 {
+		t.Errorf("dialCount = %d, want 1 (permanent error must not trigger reconnect)", dialCount)
+	}
+	if errClient.calls != 1 {
+		t.Errorf("MarkDeleted calls = %d, want 1 (must not re-attempt)", errClient.calls)
+	}
+	if len(result.Errors) == 0 {
+		t.Error("expected error to be reported")
 	}
 }
 
