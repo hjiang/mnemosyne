@@ -2172,3 +2172,43 @@ func TestOrchestrator_RetentionSweep_ExpungeFailureDoesNotLoopForever(t *testing
 		t.Error("expected errors to be reported")
 	}
 }
+
+// Test: sweepErrorAsConnError converts an error to *connError only when the
+// error originated from an IMAP operation (MarkDeleted/Expunge) and is itself
+// transient. Local errors (SQL, policy parse) must propagate unchanged so the
+// retry loop does not waste a reconnect on something a reconnect can't fix.
+func TestSweepErrorAsConnError(t *testing.T) {
+	netErr := fmt.Errorf("connection reset by peer")
+	imapErr := &goiap.Error{Type: goiap.StatusResponseTypeNo, Text: "denied"}
+	dbErr := fmt.Errorf("sql: database is closed")
+
+	cases := []struct {
+		name     string
+		err      error
+		fromIMAP bool
+		wantConn bool
+	}{
+		{"nil error", nil, true, false},
+		{"network error from IMAP -> connError", netErr, true, true},
+		{"network error from IMAP, not from IMAP path -> plain", netErr, false, false},
+		{"IMAP NO response from IMAP -> plain (permanent)", imapErr, true, false},
+		{"DB error tagged from IMAP somehow -> plain (sanity)", dbErr, false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sweepErrorAsConnError(tc.err, tc.fromIMAP)
+			if tc.err == nil {
+				if got != nil {
+					t.Errorf("got %v, want nil", got)
+				}
+				return
+			}
+			var ce *connError
+			gotConn := errors.As(got, &ce)
+			if gotConn != tc.wantConn {
+				t.Errorf("connError? got %v, want %v (err=%v fromIMAP=%v)", gotConn, tc.wantConn, tc.err, tc.fromIMAP)
+			}
+		})
+	}
+}

@@ -75,6 +75,20 @@ func isTransient(err error) bool {
 	return !errors.As(err, &imapErr)
 }
 
+// sweepErrorAsConnError wraps an error in *connError only if it originated
+// from an IMAP operation (MarkDeleted/Expunge) and looks transient. Local
+// errors (SQL, policy parse) propagate unchanged: reconnecting cannot fix
+// them, so the retry loop must not waste a no-progress budget cycle on them.
+func sweepErrorAsConnError(err error, fromIMAP bool) error {
+	if err == nil {
+		return nil
+	}
+	if fromIMAP && isTransient(err) {
+		return &connError{err: err}
+	}
+	return err
+}
+
 // connError signals that syncFolder stopped due to a connection-level failure.
 // Run uses this to decide whether reconnecting and retrying is worthwhile.
 type connError struct{ err error }
@@ -361,11 +375,14 @@ func (o *Orchestrator) syncFolder(
 		}
 	}
 
-	// Retention sweep: mark-delete previously-backed-up messages that fall in the expunge
-	// set. Process in chunks aligned with the EXPUNGE cadence: each chunk is one
-	// SQL filter ("of these UIDs, which are backed up?") + one MarkDeleted + one
-	// Expunge + one cursor checkpoint. Backed-up gating happens per chunk so we
-	// never load the full folder's locations into memory.
+	// Retention sweep: mark-delete previously-backed-up messages that fall in
+	// the expunge set. Process in chunks aligned with the EXPUNGE cadence: each
+	// chunk is one SQL filter ("of these UIDs, which are backed up?") + one
+	// MarkDeleted + one Expunge + one cursor checkpoint. The backed-up gating
+	// step happens per chunk, so this loop does not hold all backed-up matches
+	// for the sweep in memory at once. (computeExpungeSet above does still load
+	// every location row to evaluate the retention policy — a separate concern
+	// from the per-chunk gating optimized here.)
 	candidates := make([]uint32, 0, len(expungeSet))
 	for uid := range expungeSet {
 		if uid > folder.LastSweptUID {
@@ -376,6 +393,7 @@ func (o *Orchestrator) syncFolder(
 
 	var deletesSinceExpunge int
 	var sweepErr error
+	var sweepErrFromIMAP bool // true iff sweepErr came from MarkDeleted or Expunge
 	for i := 0; i < len(candidates); i += ebSize {
 		end := i + ebSize
 		if end > len(candidates) {
@@ -391,10 +409,12 @@ func (o *Orchestrator) syncFolder(
 		if len(backedUp) > 0 {
 			if err := client.MarkDeleted(backedUp); err != nil {
 				sweepErr = fmt.Errorf("mark deleted: %w", err)
+				sweepErrFromIMAP = true
 				break
 			}
 			if err := client.Expunge(); err != nil {
 				sweepErr = fmt.Errorf("expunge: %w", err)
+				sweepErrFromIMAP = true
 				break
 			}
 			result.NewDeletions += len(backedUp)
@@ -408,10 +428,7 @@ func (o *Orchestrator) syncFolder(
 
 	if sweepErr != nil {
 		result.Errors = append(result.Errors, sweepErr)
-		if isTransient(sweepErr) {
-			return &connError{err: sweepErr}
-		}
-		return sweepErr
+		return sweepErrorAsConnError(sweepErr, sweepErrFromIMAP)
 	}
 
 	// Reset the cursor only when this run had a complete picture of retention
