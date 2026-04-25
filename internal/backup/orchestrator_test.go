@@ -2214,3 +2214,31 @@ func TestSweepErrorAsConnError(t *testing.T) {
 		})
 	}
 }
+
+// Test: effectiveExpungeBatchSize normalizes any non-positive value to the
+// default. Without this, a negative expungeBatchSize would make the retention-
+// sweep loop non-terminating: i += ebSize with ebSize<=0 never advances past
+// the candidates length.
+func TestEffectiveExpungeBatchSize(t *testing.T) {
+	o := &Orchestrator{}
+
+	cases := []struct {
+		name string
+		set  int
+		want int
+	}{
+		{"unset (zero) -> default", 0, defaultExpungeBatchSize},
+		{"positive passed through", 25, 25},
+		{"large positive passed through", 5000, 5000},
+		{"negative -> default", -1, defaultExpungeBatchSize},
+		{"large negative -> default", -1000, defaultExpungeBatchSize},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			o.expungeBatchSize = tc.set
+			if got := o.effectiveExpungeBatchSize(); got != tc.want {
+				t.Errorf("set=%d: got %d, want %d", tc.set, got, tc.want)
+			}
+		})
+	}
+}

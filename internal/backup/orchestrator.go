@@ -64,6 +64,17 @@ const fetchBatchSize = 50
 
 const defaultExpungeBatchSize = 50
 
+// effectiveExpungeBatchSize returns the configured batch size, or the
+// default if the configured value is non-positive. The non-positive guard
+// matters because the retention-sweep loop advances by `ebSize` per
+// iteration; a zero or negative value would never terminate.
+func (o *Orchestrator) effectiveExpungeBatchSize() int {
+	if o.expungeBatchSize > 0 {
+		return o.expungeBatchSize
+	}
+	return defaultExpungeBatchSize
+}
+
 // isTransient reports whether an error looks like a connection-level failure
 // (worth reconnecting and retrying) rather than a server-side protocol
 // rejection (NO/BAD — retrying just gets the same response).
@@ -286,10 +297,7 @@ func (o *Orchestrator) syncFolder(
 	result *Result,
 	envelopes *[]imapwrap.Envelope, // in/out: accumulated envelopes across retries
 ) error {
-	ebSize := o.expungeBatchSize
-	if ebSize == 0 {
-		ebSize = defaultExpungeBatchSize
-	}
+	ebSize := o.effectiveExpungeBatchSize()
 
 	info, err := client.SelectFolder(folder.Name)
 	if err != nil {
