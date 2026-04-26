@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hjiang/mnemosyne/internal/db"
@@ -491,7 +492,33 @@ func TestListByFolderPaged(t *testing.T) {
 		hash := testHash("paged-" + string(rune('a'+i)))
 		date := int64(1700000000 + i*100)
 		_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "msg" + string(rune('a'+i)), Date: &date, Size: 10})
-		_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: uint32(i + 1)})
+		_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: uint32(i + 1), InternalDate: &date})
+	}
+
+	// Query plan must use the (folder_id, internal_date) index — not a temp
+	// b-tree sort over the whole folder. Otherwise opening a folder with
+	// hundreds of thousands of messages becomes O(N log N) per page load.
+	var plan strings.Builder
+	rows, err := repo.db.Query(`EXPLAIN QUERY PLAN
+		SELECT m.hash FROM messages m
+		JOIN message_locations ml ON ml.message_hash = m.hash
+		WHERE ml.folder_id = ? AND m.user_id = ?
+		ORDER BY ml.internal_date DESC LIMIT 2 OFFSET 0`, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail)
+		plan.WriteString("\n")
+	}
+	_ = rows.Close()
+	if strings.Contains(plan.String(), "USE TEMP B-TREE FOR ORDER BY") {
+		t.Errorf("query plan falls back to temp b-tree sort:\n%s", plan.String())
 	}
 
 	// First page of 2.
@@ -532,7 +559,7 @@ func TestListByFolderPaged_UserIsolation(t *testing.T) {
 	date := int64(1700000000)
 
 	_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "x", Date: &date, Size: 10})
-	_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: 1})
+	_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: 1, InternalDate: &date})
 
 	msgs, _ := repo.ListByFolderPaged(1, 2, 50, 0)
 	if len(msgs) != 0 {

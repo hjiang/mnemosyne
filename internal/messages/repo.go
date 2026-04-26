@@ -209,16 +209,20 @@ func (r *Repo) ListByFolder(folderID int64, userID int64) ([]*Message, error) {
 	return msgs, rows.Err()
 }
 
-// ListByFolderPaged returns a page of messages in a folder, ordered by date descending.
+// ListByFolderPaged returns a page of messages in a folder, ordered by IMAP
+// INTERNALDATE descending (most recently received first). The ordering uses
+// message_locations.internal_date rather than messages.date so the query can
+// be served by idx_locations_by_folder_date and avoid sorting the entire
+// folder on every page load.
 // enforces user isolation
 func (r *Repo) ListByFolderPaged(folderID, userID int64, limit, offset int) ([]*Message, error) {
 	rows, err := r.db.Query(
 		`SELECT m.hash, m.user_id, m.message_id, m.from_addr, m.to_addrs, m.cc_addrs,
 		        m.subject, m.date, m.size, m.has_attachments, m.body_text
-		 FROM messages m
-		 JOIN message_locations ml ON ml.message_hash = m.hash
+		 FROM message_locations ml
+		 JOIN messages m ON m.hash = ml.message_hash
 		 WHERE ml.folder_id = ? AND m.user_id = ?
-		 ORDER BY m.date DESC
+		 ORDER BY ml.internal_date DESC
 		 LIMIT ? OFFSET ?`,
 		folderID, userID, limit, offset,
 	)
@@ -241,15 +245,19 @@ func (r *Repo) ListByFolderPaged(folderID, userID int64, limit, offset int) ([]*
 	return msgs, rows.Err()
 }
 
-// CountByFolder returns the number of messages in a folder for a user.
+// CountByFolder returns the number of messages in a folder for a user. The
+// folder's owning user is verified via the imap_accounts join; we deliberately
+// do not join through messages because that would scan every row in the
+// folder rather than using the message_locations PK index.
 // enforces user isolation
 func (r *Repo) CountByFolder(folderID, userID int64) (int, error) {
 	var count int
 	err := r.db.QueryRow(
 		`SELECT COUNT(*)
 		 FROM message_locations ml
-		 JOIN messages m ON m.hash = ml.message_hash
-		 WHERE ml.folder_id = ? AND m.user_id = ?`,
+		 JOIN imap_folders f ON f.id = ml.folder_id
+		 JOIN imap_accounts a ON a.id = f.account_id
+		 WHERE ml.folder_id = ? AND a.user_id = ?`,
 		folderID, userID,
 	).Scan(&count)
 	if err != nil {
@@ -264,7 +272,6 @@ func (r *Repo) CountByFoldersForUser(userID int64) (map[int64]int, error) {
 	rows, err := r.db.Query(
 		`SELECT ml.folder_id, COUNT(*)
 		 FROM message_locations ml
-		 JOIN messages m ON m.hash = ml.message_hash
 		 JOIN imap_folders f ON f.id = ml.folder_id
 		 JOIN imap_accounts a ON a.id = f.account_id
 		 WHERE a.user_id = ?
