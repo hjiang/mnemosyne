@@ -607,3 +607,116 @@ func TestCountByFoldersForUser(t *testing.T) {
 		t.Errorf("user 2 counts = %d entries, want 0", len(counts))
 	}
 }
+
+func ftsRowidsMatch(t *testing.T, repo *Repo, term string) []int64 {
+	t.Helper()
+	rows, err := repo.db.Query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", term)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+func TestIndexFTS_AndReindex_RoundTrip(t *testing.T) {
+	repo := newTestRepo(t)
+	hash := testHash("fts-roundtrip")
+	date := int64(1700000000)
+	if err := repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "Original", Date: &date, Size: 10}); err != nil {
+		t.Fatal(err)
+	}
+
+	rowid, err := repo.GetRowID(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rowid <= 0 {
+		t.Fatalf("rowid = %d, want > 0", rowid)
+	}
+
+	if err := repo.IndexFTS(rowid, "Original", "alice@x", "bob@x", "", "hello world"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ftsRowidsMatch(t, repo, "hello"); len(got) != 1 || got[0] != rowid {
+		t.Errorf("MATCH 'hello' = %v, want [%d]", got, rowid)
+	}
+
+	// Backfill body text and reindex; old term should disappear, new term must hit.
+	if err := repo.UpdateBodyText(hash, "completely different content"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReindexFTS(hash, "Original", "alice@x", "bob@x", "", "completely different content"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ftsRowidsMatch(t, repo, "hello"); len(got) != 0 {
+		t.Errorf("after reindex, MATCH 'hello' = %v, want empty", got)
+	}
+	if got := ftsRowidsMatch(t, repo, "different"); len(got) != 1 || got[0] != rowid {
+		t.Errorf("MATCH 'different' = %v, want [%d]", got, rowid)
+	}
+}
+
+func TestUpdateSubject(t *testing.T) {
+	repo := newTestRepo(t)
+	hash := testHash("subj-update")
+	date := int64(1700000000)
+	if err := repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "old subject", Date: &date, Size: 10}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.UpdateSubject(hash, "new subject"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByHash(hash, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Subject != "new subject" {
+		t.Errorf("Subject = %q, want %q", got.Subject, "new subject")
+	}
+}
+
+func TestListLocationsByFolder(t *testing.T) {
+	repo := newTestRepo(t)
+	date := int64(1700000000)
+	for i := range 3 {
+		hash := testHash("loc-list-" + string(rune('a'+i)))
+		if err := repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "x", Date: &date, Size: 10}); err != nil {
+			t.Fatal(err)
+		}
+		folderID := int64(1)
+		if i == 2 {
+			folderID = 2
+		}
+		if err := repo.InsertLocation(&Location{MessageHash: hash, FolderID: folderID, UID: uint32(i + 1), InternalDate: &date}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	locs, err := repo.ListLocationsByFolder(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(locs) != 2 {
+		t.Errorf("folder 1 locs = %d, want 2", len(locs))
+	}
+
+	locs2, err := repo.ListLocationsByFolder(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(locs2) != 1 || locs2[0].UID != 3 {
+		t.Errorf("folder 2 locs = %+v, want one entry with UID=3", locs2)
+	}
+}
