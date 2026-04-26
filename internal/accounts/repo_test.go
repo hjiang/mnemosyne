@@ -722,3 +722,125 @@ func TestDelete_UserIsolation(t *testing.T) {
 		t.Errorf("account should still exist, got %v", err)
 	}
 }
+
+func TestUpdateTokens_PersistsAndDecryptsRoundTrip(t *testing.T) {
+	env := newTestEnv(t)
+	acct, err := env.repo.CreateOAuth(env.userA, "Gmail", "alice@example.com", "oauth_google", "refresh-1", "access-1", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := env.repo.UpdateTokens(acct.ID, env.userA, "access-2", "refresh-2", 200); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := env.repo.GetByID(acct.ID, env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AccessToken != "access-2" {
+		t.Errorf("AccessToken = %q, want access-2 (after update + decrypt)", got.AccessToken)
+	}
+	if got.RefreshToken != "refresh-2" {
+		t.Errorf("RefreshToken = %q, want refresh-2", got.RefreshToken)
+	}
+	if got.TokenExpiry == nil || *got.TokenExpiry != 200 {
+		t.Errorf("TokenExpiry = %v, want 200", got.TokenExpiry)
+	}
+}
+
+func TestUpdateTokens_UserIsolation(t *testing.T) {
+	env := newTestEnv(t)
+	acct, err := env.repo.CreateOAuth(env.userA, "Gmail", "alice@example.com", "oauth_google", "refresh-1", "access-1", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// userB's update against userA's account must be a silent no-op (WHERE filter excludes the row).
+	if err := env.repo.UpdateTokens(acct.ID, env.userB, "hijack-access", "hijack-refresh", 999); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := env.repo.GetByID(acct.ID, env.userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AccessToken != "access-1" || got.RefreshToken != "refresh-1" {
+		t.Errorf("tokens were rewritten across users: got access=%q refresh=%q", got.AccessToken, got.RefreshToken)
+	}
+}
+
+func TestListAllEnabled(t *testing.T) {
+	env := newTestEnv(t)
+
+	// userA: account with one enabled, one disabled folder -> should appear once.
+	acctA, err := env.repo.Create(env.userA, "A", "h", 993, "a", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fA1, err := env.repo.CreateFolder(acctA.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fA2, err := env.repo.CreateFolder(acctA.ID, "Archive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.repo.SetFolderEnabled(fA1.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.repo.SetFolderEnabled(fA2.ID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// userB: account with only off-server enabled folder -> should NOT appear.
+	acctB, err := env.repo.Create(env.userB, "B", "h", 993, "b", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fB, err := env.repo.CreateFolder(acctB.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.repo.SetFolderEnabled(fB.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.repo.MarkFoldersOffServer(acctB.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := env.repo.ListAllEnabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1; got %+v", len(got), got)
+	}
+	if got[0].AccountID != acctA.ID || got[0].UserID != env.userA {
+		t.Errorf("got %+v, want {AccountID=%d, UserID=%d}", got[0], acctA.ID, env.userA)
+	}
+}
+
+func TestListAllEnabled_DistinctAcrossFolders(t *testing.T) {
+	env := newTestEnv(t)
+	acct, err := env.repo.Create(env.userA, "A", "h", 993, "a", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f1, _ := env.repo.CreateFolder(acct.ID, "INBOX")
+	f2, _ := env.repo.CreateFolder(acct.ID, "Sent")
+	if err := env.repo.SetFolderEnabled(f1.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.repo.SetFolderEnabled(f2.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := env.repo.ListAllEnabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("len = %d, want 1 (DISTINCT should collapse multi-folder accounts)", len(got))
+	}
+}

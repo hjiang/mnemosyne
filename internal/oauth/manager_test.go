@@ -317,3 +317,75 @@ func TestEnsureFreshToken_ErrorOnNonOAuthAccount(t *testing.T) {
 		t.Fatal("expected error for non-OAuth account")
 	}
 }
+
+func TestExchange_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "acc-tok",
+			"refresh_token": "ref-tok",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	tm := &TokenManager{
+		states: make(map[string]stateEntry),
+		googleCfg: &oauth2.Config{
+			ClientID:     "id",
+			ClientSecret: "secret",
+			Endpoint:     oauth2.Endpoint{TokenURL: srv.URL + "/token"},
+		},
+	}
+
+	tok, err := tm.Exchange(context.Background(), "valid-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.AccessToken != "acc-tok" {
+		t.Errorf("AccessToken = %q, want acc-tok", tok.AccessToken)
+	}
+	if tok.RefreshToken != "ref-tok" {
+		t.Errorf("RefreshToken = %q, want ref-tok", tok.RefreshToken)
+	}
+}
+
+func TestExchange_NotConfigured(t *testing.T) {
+	tm := &TokenManager{states: make(map[string]stateEntry)}
+	_, err := tm.Exchange(context.Background(), "code")
+	if err == nil {
+		t.Fatal("expected error when google oauth not configured")
+	}
+}
+
+func TestSetGoogleEndpoint_Overrides(t *testing.T) {
+	tm := NewTokenManager(config.OAuthConfig{
+		Google: &config.OAuthProviderConfig{ClientID: "id", ClientSecret: "secret"},
+	}, "http://localhost", nil)
+	override := oauth2.Endpoint{AuthURL: "http://x/auth", TokenURL: "http://x/token"} //nolint:gosec // test-only fake URLs
+	tm.SetGoogleEndpoint(override)
+	if tm.googleCfg.Endpoint.TokenURL != "http://x/token" {
+		t.Errorf("TokenURL = %q, want http://x/token", tm.googleCfg.Endpoint.TokenURL)
+	}
+}
+
+func TestPruneExpiredStates_HardCap(t *testing.T) {
+	tm := &TokenManager{states: make(map[string]stateEntry)}
+	// Fill past the cap with non-expired entries; the hard-cap branch should
+	// kick in and drop the oldest until len(states) < maxPendingStates.
+	now := time.Now()
+	for i := 0; i < maxPendingStates+10; i++ {
+		tm.states[string(rune('a'+i))+"-state"] = stateEntry{
+			userID:    int64(i),
+			expiresAt: now.Add(time.Duration(i) * time.Minute),
+		}
+	}
+	tm.mu.Lock()
+	tm.pruneExpiredStatesLocked()
+	n := len(tm.states)
+	tm.mu.Unlock()
+	if n >= maxPendingStates {
+		t.Errorf("after prune, len(states) = %d, want < %d", n, maxPendingStates)
+	}
+}
