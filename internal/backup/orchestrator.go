@@ -591,7 +591,7 @@ func (o *Orchestrator) computeExpungeSet(
 			continue
 		}
 		seen[env.UID] = true
-		msgs = append(msgs, policy.Message{UID: env.UID, InternalDate: env.Date})
+		msgs = append(msgs, policy.Message{UID: env.UID, InternalDate: env.InternalDate})
 	}
 
 	uids := policy.Apply(cfg, msgs, time.Now())
@@ -659,8 +659,8 @@ func (o *Orchestrator) storeMessage(
 		FolderID:    folderID,
 		UID:         env.UID,
 	}
-	if env.Date != 0 {
-		loc.InternalDate = &env.Date
+	if env.InternalDate != 0 {
+		loc.InternalDate = &env.InternalDate
 	}
 	if err := o.messages.InsertLocation(loc); err != nil {
 		return false, fmt.Errorf("inserting location: %w", err)

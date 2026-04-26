@@ -503,10 +503,11 @@ func TestListByFolderPaged(t *testing.T) {
 		SELECT m.hash FROM messages m
 		JOIN message_locations ml ON ml.message_hash = m.hash
 		WHERE ml.folder_id = ? AND m.user_id = ?
-		ORDER BY ml.internal_date DESC LIMIT 2 OFFSET 0`, 1, 1)
+		ORDER BY ml.internal_date DESC, ml.uid DESC LIMIT 2 OFFSET 0`, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var id, parent, notused int
 		var detail string
@@ -516,7 +517,9 @@ func TestListByFolderPaged(t *testing.T) {
 		plan.WriteString(detail)
 		plan.WriteString("\n")
 	}
-	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(plan.String(), "USE TEMP B-TREE FOR ORDER BY") {
 		t.Errorf("query plan falls back to temp b-tree sort:\n%s", plan.String())
 	}

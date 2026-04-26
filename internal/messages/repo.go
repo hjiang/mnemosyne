@@ -213,7 +213,11 @@ func (r *Repo) ListByFolder(folderID int64, userID int64) ([]*Message, error) {
 // INTERNALDATE descending (most recently received first). The ordering uses
 // message_locations.internal_date rather than messages.date so the query can
 // be served by idx_locations_by_folder_date and avoid sorting the entire
-// folder on every page load.
+// folder on every page load. uid is the secondary key: INTERNALDATE has
+// second granularity, and many folders contain bursts of messages that share
+// a timestamp (mailing list digests, post-outage delivery flushes). Without a
+// deterministic tie-breaker, LIMIT/OFFSET paging across tied rows could drop
+// or duplicate messages between pages.
 // enforces user isolation
 func (r *Repo) ListByFolderPaged(folderID, userID int64, limit, offset int) ([]*Message, error) {
 	rows, err := r.db.Query(
@@ -222,7 +226,7 @@ func (r *Repo) ListByFolderPaged(folderID, userID int64, limit, offset int) ([]*
 		 FROM message_locations ml
 		 JOIN messages m ON m.hash = ml.message_hash
 		 WHERE ml.folder_id = ? AND m.user_id = ?
-		 ORDER BY ml.internal_date DESC
+		 ORDER BY ml.internal_date DESC, ml.uid DESC
 		 LIMIT ? OFFSET ?`,
 		folderID, userID, limit, offset,
 	)
@@ -247,8 +251,9 @@ func (r *Repo) ListByFolderPaged(folderID, userID int64, limit, offset int) ([]*
 
 // CountByFolder returns the number of messages in a folder for a user. The
 // folder's owning user is verified via the imap_accounts join; we deliberately
-// do not join through messages because that would scan every row in the
-// folder rather than using the message_locations PK index.
+// do not join through messages because that would add a per-row lookup into
+// messages to check user_id, while this form can be satisfied from
+// message_locations alone as a covering scan for the count.
 // enforces user isolation
 func (r *Repo) CountByFolder(folderID, userID int64) (int, error) {
 	var count int
