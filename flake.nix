@@ -15,7 +15,7 @@
           pname = "mnemosyne";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-osW8WU8Q3hRaKHKRERN6rCqmZS3s7uxdzu/gyofq2Ps=";
+          vendorHash = "sha256-5PEVZraQk/RpBf/rWMHW5q89Hqsoaz7sUxbTlYGDahI=";
           subPackages = [ "cmd/mnemosyne" ];
           env.CGO_ENABLED = 0;
           ldflags = [ "-s" "-w" ];
