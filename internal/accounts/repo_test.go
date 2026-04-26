@@ -827,8 +827,14 @@ func TestListAllEnabled_DistinctAcrossFolders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f1, _ := env.repo.CreateFolder(acct.ID, "INBOX")
-	f2, _ := env.repo.CreateFolder(acct.ID, "Sent")
+	f1, err := env.repo.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f2, err := env.repo.CreateFolder(acct.ID, "Sent")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := env.repo.SetFolderEnabled(f1.ID, true); err != nil {
 		t.Fatal(err)
 	}
