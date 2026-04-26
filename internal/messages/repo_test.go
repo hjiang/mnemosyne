@@ -623,6 +623,9 @@ func ftsRowidsMatch(t *testing.T, repo *Repo, term string) []int64 {
 		}
 		out = append(out, id)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	return out
 }
 
