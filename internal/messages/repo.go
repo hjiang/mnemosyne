@@ -256,6 +256,19 @@ func (r *Repo) ListByFolderPaged(folderID, userID int64, limit, offset int) ([]*
 // lookup into messages to check user_id; this form keeps user isolation in
 // the folder/account lookup path while letting the message_locations search
 // run as a covering index scan.
+//
+// Caveat: messages are deduped by content hash globally (messages.hash is
+// the PK and Insert is ON CONFLICT DO NOTHING), so two users backing up
+// byte-identical content end up with one messages row owned by whoever got
+// there first plus one location per user. ListByFolderPaged still filters
+// on m.user_id, so it correctly omits the alien-owned rows; this count
+// query does not, so it can over-count by the size of that intersection.
+// The intersection is empirically near-zero on real mail (Received headers
+// and Message-IDs make byte-identical bodies rare across users), and the
+// only user-visible effect is a slightly inflated "X of Y" page footer —
+// no content disclosure. Properly closing this gap requires changing the
+// dedup model (e.g., scoping messages.hash by user_id) and is tracked
+// separately rather than paid for on every page render.
 // enforces user isolation
 func (r *Repo) CountByFolder(folderID, userID int64) (int, error) {
 	var count int

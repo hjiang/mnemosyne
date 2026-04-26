@@ -486,12 +486,20 @@ func TestInsertLocation_Idempotent(t *testing.T) {
 func TestListByFolderPaged(t *testing.T) {
 	repo := newTestRepo(t)
 
-	// Insert 5 messages with increasing dates into folder 1.
+	// Make messages.date and message_locations.internal_date disagree: the
+	// header date is constant across all rows, but internal_date increases
+	// with i. The expected newest-first order therefore tracks internal_date,
+	// which is what ListByFolderPaged claims to sort by. If someone
+	// regressed the ORDER BY back to m.date, every row would tie and the
+	// returned order would be undefined — the msge-first assertion below
+	// would fail (or pass only by luck).
+	const constHeaderDate = int64(1_600_000_000)
 	for i := range 5 {
 		hash := testHash("paged-" + string(rune('a'+i)))
-		date := int64(1700000000 + i*100)
-		_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "msg" + string(rune('a'+i)), Date: &date, Size: 10})
-		_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: uint32(i + 1), InternalDate: &date})
+		header := constHeaderDate
+		internal := int64(1_700_000_000 + i*100)
+		_ = repo.Insert(&Message{Hash: hash, UserID: 1, Subject: "msg" + string(rune('a'+i)), Date: &header, Size: 10})
+		_ = repo.InsertLocation(&Location{MessageHash: hash, FolderID: 1, UID: uint32(i + 1), InternalDate: &internal})
 	}
 
 	// First page of 2.
@@ -502,9 +510,12 @@ func TestListByFolderPaged(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("page 1: len = %d, want 2", len(msgs))
 	}
-	// Date DESC: newest first.
+	// internal_date DESC: msge (i=4) has the highest internal_date.
 	if msgs[0].Subject != "msge" {
 		t.Errorf("page 1 first = %q, want msge", msgs[0].Subject)
+	}
+	if msgs[1].Subject != "msgd" {
+		t.Errorf("page 1 second = %q, want msgd", msgs[1].Subject)
 	}
 
 	// Second page of 2.

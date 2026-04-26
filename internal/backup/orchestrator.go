@@ -574,16 +574,21 @@ func (o *Orchestrator) computeExpungeSet(
 	seen := make(map[uint32]bool, len(locs)+len(newEnvs))
 	var msgs []policy.Message
 
+	// Retention skips messages whose timestamp we genuinely don't know:
+	// deciding to expunge based on a fabricated zero date would mistake any
+	// such message for one delivered at the Unix epoch and expunge it under
+	// younger_than rules. The new-envelope branch falls back to the header
+	// Date: only because storeMessage applies the same fallback before
+	// persisting; the persisted-locations branch trusts whatever was stored.
 	for _, loc := range locs {
 		if seen[loc.UID] {
 			continue
 		}
 		seen[loc.UID] = true
-		m := policy.Message{UID: loc.UID}
-		if loc.InternalDate != nil {
-			m.InternalDate = *loc.InternalDate
+		if loc.InternalDate == nil || *loc.InternalDate == 0 {
+			continue
 		}
-		msgs = append(msgs, m)
+		msgs = append(msgs, policy.Message{UID: loc.UID, InternalDate: *loc.InternalDate})
 	}
 
 	for _, env := range newEnvs {
@@ -591,7 +596,14 @@ func (o *Orchestrator) computeExpungeSet(
 			continue
 		}
 		seen[env.UID] = true
-		msgs = append(msgs, policy.Message{UID: env.UID, InternalDate: env.InternalDate})
+		ts := env.InternalDate
+		if ts == 0 {
+			ts = env.Date
+		}
+		if ts == 0 {
+			continue
+		}
+		msgs = append(msgs, policy.Message{UID: env.UID, InternalDate: ts})
 	}
 
 	uids := policy.Apply(cfg, msgs, time.Now())
@@ -659,8 +671,17 @@ func (o *Orchestrator) storeMessage(
 		FolderID:    folderID,
 		UID:         env.UID,
 	}
-	if env.InternalDate != 0 {
-		loc.InternalDate = &env.InternalDate
+	// Prefer authentic IMAP INTERNALDATE; fall back to the message's Date:
+	// header only when the server didn't supply INTERNALDATE (RFC 9051
+	// requires it but defensive code is cheap). Leave NULL only when both
+	// are unknown — those rows sort last in browse and are skipped by
+	// retention so we never expunge based on a fabricated timestamp.
+	internalDate := env.InternalDate
+	if internalDate == 0 {
+		internalDate = env.Date
+	}
+	if internalDate != 0 {
+		loc.InternalDate = &internalDate
 	}
 	if err := o.messages.InsertLocation(loc); err != nil {
 		return false, fmt.Errorf("inserting location: %w", err)
