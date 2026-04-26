@@ -707,19 +707,29 @@ func TestListLocationsByFolder(t *testing.T) {
 		}
 	}
 
+	collect := func(locs []Location) map[uint32]bool {
+		m := make(map[uint32]bool, len(locs))
+		for _, l := range locs {
+			m[l.UID] = true
+		}
+		return m
+	}
+
 	locs, err := repo.ListLocationsByFolder(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(locs) != 2 {
-		t.Errorf("folder 1 locs = %d, want 2", len(locs))
+	got1 := collect(locs)
+	if len(got1) != 2 || !got1[1] || !got1[2] {
+		t.Errorf("folder 1 UIDs = %v, want {1,2}", got1)
 	}
 
 	locs2, err := repo.ListLocationsByFolder(2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(locs2) != 1 || locs2[0].UID != 3 {
-		t.Errorf("folder 2 locs = %+v, want one entry with UID=3", locs2)
+	got2 := collect(locs2)
+	if len(got2) != 1 || !got2[3] {
+		t.Errorf("folder 2 UIDs = %v, want {3}", got2)
 	}
 }
