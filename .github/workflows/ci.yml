@@ -28,7 +28,14 @@ jobs:
         run: nix develop --command golangci-lint run ./...
 
       - name: Test
-        run: nix develop --command go test -race -count=1 ./...
+        run: nix develop --command go test -race -count=1 -coverprofile=coverage.out -coverpkg=./... ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       - name: Build binary
         run: nix build .#default

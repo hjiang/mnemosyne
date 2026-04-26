@@ -1,5 +1,7 @@
 # Mnemosyne
 
+[![codecov](https://codecov.io/gh/hjiang/mnemosyne/branch/main/graph/badge.svg)](https://codecov.io/gh/hjiang/mnemosyne)
+
 A self-hosted web application that pulls emails from IMAP servers and makes them searchable. Back up your email to your own hardware, search it with Gmail-style operators, and export it in standard formats.
 
 ## Features
