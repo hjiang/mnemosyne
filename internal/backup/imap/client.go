@@ -27,15 +27,21 @@ type FolderInfo struct {
 }
 
 // Envelope contains the metadata for a single message.
+//
+// Date is the message's RFC 5322 Date: header (sender-controlled, may be
+// missing or wrong). InternalDate is the IMAP INTERNALDATE attribute
+// (server-controlled, the time this copy of the message arrived in this
+// folder). Both are unix seconds; either may be 0 when unavailable.
 type Envelope struct {
-	UID       uint32
-	MessageID string
-	Subject   string
-	From      string
-	To        string
-	Cc        string
-	Date      int64
-	Size      int64
+	UID          uint32
+	MessageID    string
+	Subject      string
+	From         string
+	To           string
+	Cc           string
+	Date         int64
+	InternalDate int64
+	Size         int64
 }
 
 // ProxyConfig holds optional SOCKS5 proxy settings for IMAP connections.
@@ -217,9 +223,10 @@ func (c *Client) FetchEnvelopes(startUID, endUID uint32) ([]Envelope, error) {
 		Stop:  goiap.UID(endUID),
 	}}
 	opts := &goiap.FetchOptions{
-		UID:        true,
-		Envelope:   true,
-		RFC822Size: true,
+		UID:          true,
+		Envelope:     true,
+		InternalDate: true,
+		RFC822Size:   true,
 	}
 
 	bufs, err := c.raw.Fetch(uidSet, opts).Collect()
@@ -230,6 +237,9 @@ func (c *Client) FetchEnvelopes(startUID, endUID uint32) ([]Envelope, error) {
 		env := Envelope{
 			UID:  uint32(buf.UID),
 			Size: buf.RFC822Size,
+		}
+		if !buf.InternalDate.IsZero() {
+			env.InternalDate = buf.InternalDate.Unix()
 		}
 		if buf.Envelope != nil {
 			env.MessageID = buf.Envelope.MessageID
@@ -373,4 +383,3 @@ func formatAddrs(addrs []goiap.Address) string {
 	}
 	return strings.Join(result, ", ")
 }
-
