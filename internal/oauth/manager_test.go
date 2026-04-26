@@ -375,13 +375,13 @@ func TestPruneExpiredStates_HardCap(t *testing.T) {
 	// Fill past the cap with non-expired entries; the hard-cap branch should
 	// kick in and drop the oldest until len(states) < maxPendingStates.
 	now := time.Now()
+	tm.mu.Lock()
 	for i := 0; i < maxPendingStates+10; i++ {
 		tm.states[string(rune('a'+i))+"-state"] = stateEntry{
 			userID:    int64(i),
 			expiresAt: now.Add(time.Duration(i) * time.Minute),
 		}
 	}
-	tm.mu.Lock()
 	tm.pruneExpiredStatesLocked()
 	n := len(tm.states)
 	tm.mu.Unlock()
