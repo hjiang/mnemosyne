@@ -250,10 +250,12 @@ func (r *Repo) ListByFolderPaged(folderID, userID int64, limit, offset int) ([]*
 }
 
 // CountByFolder returns the number of messages in a folder for a user. The
-// folder's owning user is verified via the imap_accounts join; we deliberately
-// do not join through messages because that would add a per-row lookup into
-// messages to check user_id, while this form can be satisfied from
-// message_locations alone as a covering scan for the count.
+// folder's owning user is verified via point-lookup joins through
+// imap_folders and imap_accounts (one row each, by primary key). We
+// deliberately do not join through messages because that would add a per-row
+// lookup into messages to check user_id; this form keeps user isolation in
+// the folder/account lookup path while letting the message_locations search
+// run as a covering index scan.
 // enforces user isolation
 func (r *Repo) CountByFolder(folderID, userID int64) (int, error) {
 	var count int
