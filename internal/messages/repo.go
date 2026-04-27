@@ -89,7 +89,8 @@ func (r *Repo) Insert(m *Message) error {
 }
 
 // InsertLocation records that a message appears at a folder+UID.
-// Returns an error if the message hash doesn't exist.
+// Returns an error wrapping ErrFKViolation if a referenced row
+// (message_hash or folder_id) does not exist.
 func (r *Repo) InsertLocation(loc *Location) error {
 	_, err := r.db.Exec(
 		`INSERT INTO message_locations (message_hash, folder_id, uid, internal_date, flags)
