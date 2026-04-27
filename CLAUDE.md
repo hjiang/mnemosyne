@@ -99,6 +99,23 @@ The project uses golangci-lint v2 with: errcheck, govet, staticcheck, gosec, goc
 - `//nolint:gosec` for intentional test-only permissions or known-safe SQL construction
 - The search executor builds SQL via `fmt.Sprintf` for the WHERE clause structure, but all values are parameterized (`?` placeholders)
 
+### Browser Testing
+
+Chrome is available system-wide via Nix. Do NOT run `agent-browser install` — it downloads a glibc-linked binary that won't work under NixOS. The system Chrome works with agent-browser automatically.
+
+### Manual UI Testing
+
+```bash
+mkdir -p /tmp/mnemosyne-test
+MNEMOSYNE_DATA_DIR=/tmp/mnemosyne-test go run ./cmd/mnemosyne serve  # defaults to :8080
+printf 'testpass\ntestpass\n' | MNEMOSYNE_DATA_DIR=/tmp/mnemosyne-test go run ./cmd/mnemosyne adduser test@example.com
+# Login with test@example.com / testpass
+```
+
+### CSS / Pico
+
+Pico CSS applies `flex: 1 1 auto` to all direct children of `[role=search]` and `[role=group]` elements (standard ARIA roles that Pico treats as "input groups"), making them equal-width. Override with explicit `flex` values in `style.css` when needed.
+
 ### Templates
 
 Authenticated pages extend `layout.html` via `{{define "content"}}`. Login is self-contained (no layout). Layout is parsed alongside each page template via `ParseFS`. Nav active state is auto-injected by `render()` based on template name (`navActiveMap` in `server.go`). Pages needing extra scripts use `{{define "scripts"}}`. Stored in `internal/httpserver/templates/`. Registered in the `templates` map in `server.go:New()`.
