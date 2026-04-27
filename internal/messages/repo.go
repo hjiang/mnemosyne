@@ -6,10 +6,25 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// ErrNotFound indicates the requested message was not found.
-var ErrNotFound = errors.New("message not found")
+var (
+	// ErrNotFound indicates the requested message was not found.
+	ErrNotFound = errors.New("message not found")
+	// ErrFKViolation indicates a referenced row (e.g. message hash) does not exist.
+	ErrFKViolation = errors.New("foreign key violation")
+)
+
+func isFKViolation(err error) bool {
+	var sErr *sqlite.Error
+	if !errors.As(err, &sErr) {
+		return false
+	}
+	return sErr.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY
+}
 
 // Message represents a backed-up email message.
 type Message struct {
@@ -74,7 +89,8 @@ func (r *Repo) Insert(m *Message) error {
 }
 
 // InsertLocation records that a message appears at a folder+UID.
-// Returns an error if the message hash doesn't exist.
+// Returns an error wrapping ErrFKViolation if a referenced row
+// (message_hash or folder_id) does not exist.
 func (r *Repo) InsertLocation(loc *Location) error {
 	_, err := r.db.Exec(
 		`INSERT INTO message_locations (message_hash, folder_id, uid, internal_date, flags)
@@ -83,8 +99,8 @@ func (r *Repo) InsertLocation(loc *Location) error {
 		loc.MessageHash, loc.FolderID, loc.UID, loc.InternalDate, loc.Flags,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "FOREIGN KEY") {
-			return fmt.Errorf("message hash not found: %w", err)
+		if isFKViolation(err) {
+			return fmt.Errorf("inserting location: %w", errors.Join(ErrFKViolation, err))
 		}
 		return fmt.Errorf("inserting location: %w", err)
 	}

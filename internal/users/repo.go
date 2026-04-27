@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 var (
@@ -43,7 +45,8 @@ func (r *Repo) Create(email, passwordHash string) (*User, error) {
 		email, passwordHash, now.Unix(),
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		var sErr *sqlite.Error
+		if errors.As(err, &sErr) && sErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
 			return nil, ErrDuplicateEmail
 		}
 		return nil, fmt.Errorf("inserting user: %w", err)
