@@ -25,6 +25,8 @@ type messageTestEnv struct {
 	blobs    *blobs.Store
 	cookieA  string
 	cookieB  string
+	userAID  int64
+	userBID  int64
 }
 
 func newMessageTestEnv(t *testing.T) *messageTestEnv {
@@ -46,13 +48,31 @@ func newMessageTestEnv(t *testing.T) *messageTestEnv {
 	blobStore := blobs.NewStore(filepath.Join(dir, "blobs"))
 	srv := New(userRepo, sessions, nil, nil, nil, msgRepo, nil, blobStore, nil)
 
-	hashA, _ := auth.HashPasswordForTesting("pass")
-	uA, _ := userRepo.Create("a@test.com", hashA)
-	hashB, _ := auth.HashPasswordForTesting("pass")
-	uB, _ := userRepo.Create("b@test.com", hashB)
+	hashA, err := auth.HashPasswordForTesting("pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uA, err := userRepo.Create("a@test.com", hashA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashB, err := auth.HashPasswordForTesting("pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uB, err := userRepo.Create("b@test.com", hashB)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	sessA, _ := sessions.Create(uA.ID)
-	sessB, _ := sessions.Create(uB.ID)
+	sessA, err := sessions.Create(uA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessB, err := sessions.Create(uB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	return &messageTestEnv{
 		server:   srv,
@@ -60,6 +80,8 @@ func newMessageTestEnv(t *testing.T) *messageTestEnv {
 		blobs:    blobStore,
 		cookieA:  hex.EncodeToString(sessA.ID),
 		cookieB:  hex.EncodeToString(sessB.ID),
+		userAID:  uA.ID,
+		userBID:  uB.ID,
 	}
 }
 
@@ -225,7 +247,7 @@ func TestMessageHandler_Renders(t *testing.T) {
 	msgHash := sha256.Sum256([]byte("render-msg"))
 	date := int64(1700000000)
 	if err := env.messages.Insert(&messages.Message{
-		Hash: msgHash[:], UserID: 1, Subject: "UniqueSubject42",
+		Hash: msgHash[:], UserID: env.userAID, Subject: "UniqueSubject42",
 		FromAddr: "alice@x.com", Date: &date, Size: 10,
 	}); err != nil {
 		t.Fatal(err)
@@ -264,11 +286,11 @@ func TestMessageHandler_InvalidHash_400(t *testing.T) {
 func TestMessageHandler_CrossUser_404(t *testing.T) {
 	env := newMessageTestEnv(t)
 
-	// Message owned by user A (id=1).
+	// Message owned by user A; user B must not be able to see it.
 	msgHash := sha256.Sum256([]byte("private-msg"))
 	date := int64(1700000000)
 	if err := env.messages.Insert(&messages.Message{
-		Hash: msgHash[:], UserID: 1, Subject: "Private",
+		Hash: msgHash[:], UserID: env.userAID, Subject: "Private",
 		Date: &date, Size: 10,
 	}); err != nil {
 		t.Fatal(err)
