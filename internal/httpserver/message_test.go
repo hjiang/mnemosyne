@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,5 +216,69 @@ func TestAttachmentDownload_InvalidID(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestMessageHandler_Renders(t *testing.T) {
+	env := newMessageTestEnv(t)
+
+	msgHash := sha256.Sum256([]byte("render-msg"))
+	date := int64(1700000000)
+	if err := env.messages.Insert(&messages.Message{
+		Hash: msgHash[:], UserID: 1, Subject: "UniqueSubject42",
+		FromAddr: "alice@x.com", Date: &date, Size: 10,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/message/"+hex.EncodeToString(msgHash[:]), nil)
+	req.AddCookie(&http.Cookie{Name: "mnemosyne_session", Value: env.cookieA})
+	rr := httptest.NewRecorder()
+	env.server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "UniqueSubject42") {
+		t.Error("expected subject in rendered message page")
+	}
+	if !strings.Contains(body, "alice@x.com") {
+		t.Error("expected From address in rendered message page")
+	}
+}
+
+func TestMessageHandler_InvalidHash_400(t *testing.T) {
+	env := newMessageTestEnv(t)
+
+	req := httptest.NewRequest("GET", "/message/notvalidhex", nil)
+	req.AddCookie(&http.Cookie{Name: "mnemosyne_session", Value: env.cookieA})
+	rr := httptest.NewRecorder()
+	env.server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestMessageHandler_CrossUser_404(t *testing.T) {
+	env := newMessageTestEnv(t)
+
+	// Message owned by user A (id=1).
+	msgHash := sha256.Sum256([]byte("private-msg"))
+	date := int64(1700000000)
+	_ = env.messages.Insert(&messages.Message{
+		Hash: msgHash[:], UserID: 1, Subject: "Private",
+		Date: &date, Size: 10,
+	})
+
+	// User B requests it.
+	req := httptest.NewRequest("GET", "/message/"+hex.EncodeToString(msgHash[:]), nil)
+	req.AddCookie(&http.Cookie{Name: "mnemosyne_session", Value: env.cookieB})
+	rr := httptest.NewRecorder()
+	env.server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d (user isolation)", rr.Code, http.StatusNotFound)
 	}
 }
