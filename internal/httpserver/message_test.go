@@ -267,10 +267,12 @@ func TestMessageHandler_CrossUser_404(t *testing.T) {
 	// Message owned by user A (id=1).
 	msgHash := sha256.Sum256([]byte("private-msg"))
 	date := int64(1700000000)
-	_ = env.messages.Insert(&messages.Message{
+	if err := env.messages.Insert(&messages.Message{
 		Hash: msgHash[:], UserID: 1, Subject: "Private",
 		Date: &date, Size: 10,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// User B requests it.
 	req := httptest.NewRequest("GET", "/message/"+hex.EncodeToString(msgHash[:]), nil)

@@ -2,14 +2,13 @@ package httpserver
 
 import (
 	"bytes"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"encoding/hex"
 
 	"github.com/hjiang/mnemosyne/internal/auth"
 	"github.com/hjiang/mnemosyne/internal/blobs"
@@ -25,6 +24,7 @@ type exportTestEnv struct {
 	blobs    *blobs.Store
 	cookieA  string
 	userAID  int64
+	userBID  int64
 }
 
 func newExportTestEnv(t *testing.T) *exportTestEnv {
@@ -46,9 +46,26 @@ func newExportTestEnv(t *testing.T) *exportTestEnv {
 	searchExec := search.NewExecutor(database)
 	srv := New(userRepo, sessions, nil, nil, nil, msgRepo, searchExec, store, nil)
 
-	hashA, _ := auth.HashPasswordForTesting("pass")
-	uA, _ := userRepo.Create("a@test.com", hashA)
-	sessA, _ := sessions.Create(uA.ID)
+	hashA, err := auth.HashPasswordForTesting("pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uA, err := userRepo.Create("a@test.com", hashA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessA, err := sessions.Create(uA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashB, err := auth.HashPasswordForTesting("pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uB, err := userRepo.Create("b@test.com", hashB)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	return &exportTestEnv{
 		server:   srv,
@@ -56,6 +73,7 @@ func newExportTestEnv(t *testing.T) *exportTestEnv {
 		blobs:    store,
 		cookieA:  hex.EncodeToString(sessA.ID),
 		userAID:  uA.ID,
+		userBID:  uB.ID,
 	}
 }
 
@@ -142,12 +160,17 @@ func TestExport_DefaultsToMbox(t *testing.T) {
 	env := newExportTestEnv(t)
 
 	raw := []byte("From: a@x.com\r\nSubject: Defaulted\r\n\r\nbody\r\n")
-	hash, _ := env.blobs.Put(bytes.NewReader(raw))
+	hash, err := env.blobs.Put(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
 	date := int64(1700000000)
-	_ = env.messages.Insert(&messages.Message{
+	if err := env.messages.Insert(&messages.Message{
 		Hash: hash, UserID: env.userAID, Subject: "Defaulted", FromAddr: "a@x.com",
 		Date: &date, Size: int64(len(raw)),
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Omit format param entirely.
 	rr := env.post(t, "/export?q=subject:Defaulted")
@@ -162,14 +185,19 @@ func TestExport_DefaultsToMbox(t *testing.T) {
 func TestExport_CrossUserIsolation_404(t *testing.T) {
 	env := newExportTestEnv(t)
 
-	// Seed a message owned by a *different* user (id 9999, no session).
+	// Seed a message owned by user B; user A's session must not see it.
 	raw := []byte("From: b@x.com\r\nSubject: OtherUser\r\n\r\nbody\r\n")
-	hash, _ := env.blobs.Put(bytes.NewReader(raw))
+	hash, err := env.blobs.Put(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
 	date := int64(1700000000)
-	_ = env.messages.Insert(&messages.Message{
-		Hash: hash, UserID: 9999, Subject: "OtherUser", FromAddr: "b@x.com",
+	if err := env.messages.Insert(&messages.Message{
+		Hash: hash, UserID: env.userBID, Subject: "OtherUser", FromAddr: "b@x.com",
 		Date: &date, Size: int64(len(raw)),
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// User A queries for it — should get 404 because user A owns no matching messages.
 	rr := env.post(t, "/export?format=mbox&q=subject:OtherUser")

@@ -56,12 +56,30 @@ func newBrowseTestEnv(t *testing.T) *browseTestEnv {
 	searchExec := search.NewExecutor(database)
 	srv := New(userRepo, sessions, acctRepo, nil, nil, msgRepo, searchExec, store, nil)
 
-	hashA, _ := auth.HashPasswordForTesting("pass")
-	uA, _ := userRepo.Create("a@test.com", hashA)
-	hashB, _ := auth.HashPasswordForTesting("pass")
-	uB, _ := userRepo.Create("b@test.com", hashB)
-	sessA, _ := sessions.Create(uA.ID)
-	sessB, _ := sessions.Create(uB.ID)
+	hashA, err := auth.HashPasswordForTesting("pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uA, err := userRepo.Create("a@test.com", hashA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashB, err := auth.HashPasswordForTesting("pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uB, err := userRepo.Create("b@test.com", hashB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessA, err := sessions.Create(uA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessB, err := sessions.Create(uB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	return &browseTestEnv{
 		server:   srv,
@@ -95,8 +113,14 @@ func seedMessage(t *testing.T, repo *messages.Repo, userID, folderID int64, subj
 func TestBrowse_NoFolder_RendersSidebar(t *testing.T) {
 	env := newBrowseTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Gmail", "h", 993, "u", "p", true, "", 0, "", "")
-	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
+	acct, err := env.accounts.Create(env.userAID, "Gmail", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := env.accounts.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 	seedMessage(t, env.messages, env.userAID, folder.ID, "Hello", "alice@x.com", 1)
 
 	req := httptest.NewRequest("GET", "/browse", nil)
@@ -119,8 +143,14 @@ func TestBrowse_NoFolder_RendersSidebar(t *testing.T) {
 func TestBrowse_FolderMessages_Rendered(t *testing.T) {
 	env := newBrowseTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Gmail", "h", 993, "u", "p", true, "", 0, "", "")
-	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
+	acct, err := env.accounts.Create(env.userAID, "Gmail", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := env.accounts.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 	seedMessage(t, env.messages, env.userAID, folder.ID, "Hello world", "alice@x.com", 1)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/browse/%d", folder.ID), nil)
@@ -140,8 +170,14 @@ func TestBrowse_FolderMessages_Rendered(t *testing.T) {
 func TestBrowse_CrossUserFolder_404(t *testing.T) {
 	env := newBrowseTestEnv(t)
 
-	acctB, _ := env.accounts.Create(env.userBID, "B", "h", 993, "u", "p", true, "", 0, "", "")
-	folderB, _ := env.accounts.CreateFolder(acctB.ID, "INBOX")
+	acctB, err := env.accounts.Create(env.userBID, "B", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folderB, err := env.accounts.CreateFolder(acctB.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 	seedMessage(t, env.messages, env.userBID, folderB.ID, "secret", "b@x.com", 1)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/browse/%d", folderB.ID), nil)
