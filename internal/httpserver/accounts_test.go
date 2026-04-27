@@ -61,13 +61,31 @@ func newAcctTestEnv(t *testing.T) *acctTestEnv {
 	jobQueue := jobs.NewQueue(database, clock.Now)
 	srv := New(userRepo, sessions, acctRepo, orch, jobQueue, msgRepo, searchExec, store, nil)
 
-	hashA, _ := auth.HashPasswordForTesting("pass")
-	uA, _ := userRepo.Create("a@test.com", hashA)
-	hashB, _ := auth.HashPasswordForTesting("pass")
-	uB, _ := userRepo.Create("b@test.com", hashB)
+	hashA, err := auth.HashPasswordForTesting("pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uA, err := userRepo.Create("a@test.com", hashA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashB, err := auth.HashPasswordForTesting("pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uB, err := userRepo.Create("b@test.com", hashB)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	sessA, _ := sessions.Create(uA.ID)
-	sessB, _ := sessions.Create(uB.ID)
+	sessA, err := sessions.Create(uA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessB, err := sessions.Create(uB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	return &acctTestEnv{
 		server:   srv,
