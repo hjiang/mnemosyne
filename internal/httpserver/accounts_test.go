@@ -362,8 +362,14 @@ func TestAccounts_FolderRefresh_CrossUser_404(t *testing.T) {
 func TestAccounts_FolderPolicy_NewestN(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "h", 993, "u", "p", true, "", 0, "", "")
-	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
+	acct, err := env.accounts.Create(env.userAID, "Test", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := env.accounts.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	rr := env.doRequest(t, "POST",
 		fmt.Sprintf("/accounts/%d/folders/%d/policy", acct.ID, folder.ID),
@@ -374,7 +380,13 @@ func TestAccounts_FolderPolicy_NewestN(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusSeeOther)
 	}
 
-	folders, _ := env.accounts.ListFolders(acct.ID)
+	folders, err := env.accounts.ListFolders(acct.ID)
+	if err != nil {
+		t.Fatalf("ListFolders: %v", err)
+	}
+	if len(folders) == 0 {
+		t.Fatal("expected at least one folder")
+	}
 	if !strings.Contains(folders[0].PolicyJSON, `"leave_on_server":"newest_n"`) {
 		t.Errorf("PolicyJSON = %q, expected newest_n", folders[0].PolicyJSON)
 	}
@@ -386,8 +398,14 @@ func TestAccounts_FolderPolicy_NewestN(t *testing.T) {
 func TestAccounts_FolderPolicy_InvalidN_400(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "h", 993, "u", "p", true, "", 0, "", "")
-	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
+	acct, err := env.accounts.Create(env.userAID, "Test", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := env.accounts.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	rr := env.doRequest(t, "POST",
 		fmt.Sprintf("/accounts/%d/folders/%d/policy", acct.ID, folder.ID),
@@ -402,8 +420,14 @@ func TestAccounts_FolderPolicy_InvalidN_400(t *testing.T) {
 func TestAccounts_FolderPolicy_UnknownType_400(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "h", 993, "u", "p", true, "", 0, "", "")
-	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
+	acct, err := env.accounts.Create(env.userAID, "Test", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := env.accounts.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	rr := env.doRequest(t, "POST",
 		fmt.Sprintf("/accounts/%d/folders/%d/policy", acct.ID, folder.ID),
@@ -418,8 +442,14 @@ func TestAccounts_FolderPolicy_UnknownType_400(t *testing.T) {
 func TestAccounts_FolderPolicy_CrossUser_404(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acctB, _ := env.accounts.Create(env.userBID, "B", "h", 993, "u", "p", true, "", 0, "", "")
-	folderB, _ := env.accounts.CreateFolder(acctB.ID, "INBOX")
+	acctB, err := env.accounts.Create(env.userBID, "B", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folderB, err := env.accounts.CreateFolder(acctB.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	rr := env.doRequest(t, "POST",
 		fmt.Sprintf("/accounts/%d/folders/%d/policy", acctB.ID, folderB.ID),
@@ -434,8 +464,14 @@ func TestAccounts_FolderPolicy_CrossUser_404(t *testing.T) {
 func TestAccounts_FolderResync_ResetsLastSeenUID(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acct, _ := env.accounts.Create(env.userAID, "Test", "h", 993, "u", "p", true, "", 0, "", "")
-	folder, _ := env.accounts.CreateFolder(acct.ID, "INBOX")
+	acct, err := env.accounts.Create(env.userAID, "Test", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := env.accounts.CreateFolder(acct.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := env.accounts.SetLastSeenUID(folder.ID, 42); err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +484,13 @@ func TestAccounts_FolderResync_ResetsLastSeenUID(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusSeeOther)
 	}
 
-	folders, _ := env.accounts.ListFolders(acct.ID)
+	folders, err := env.accounts.ListFolders(acct.ID)
+	if err != nil {
+		t.Fatalf("ListFolders: %v", err)
+	}
+	if len(folders) == 0 {
+		t.Fatal("expected at least one folder")
+	}
 	if folders[0].LastSeenUID != 0 {
 		t.Errorf("LastSeenUID = %d, want 0", folders[0].LastSeenUID)
 	}
@@ -457,8 +499,14 @@ func TestAccounts_FolderResync_ResetsLastSeenUID(t *testing.T) {
 func TestAccounts_FolderResync_CrossUser_404(t *testing.T) {
 	env := newAcctTestEnv(t)
 
-	acctB, _ := env.accounts.Create(env.userBID, "B", "h", 993, "u", "p", true, "", 0, "", "")
-	folderB, _ := env.accounts.CreateFolder(acctB.ID, "INBOX")
+	acctB, err := env.accounts.Create(env.userBID, "B", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folderB, err := env.accounts.CreateFolder(acctB.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	rr := env.doRequest(t, "POST",
 		fmt.Sprintf("/accounts/%d/folders/%d/resync", acctB.ID, folderB.ID),
@@ -492,7 +540,10 @@ func TestAccounts_Create_DiscoveryFails_RollsBack(t *testing.T) {
 	}
 
 	// Account row must have been rolled back.
-	accts, _ := env.accounts.List(env.userAID)
+	accts, err := env.accounts.List(env.userAID)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
 	if len(accts) != 0 {
 		t.Errorf("expected 0 accounts after rollback, got %d", len(accts))
 	}
@@ -504,7 +555,9 @@ func TestAccounts_Create_Success(t *testing.T) {
 	var called bool
 	env.server.discoverFolders = func(acct *accounts.Account) error {
 		called = true
-		_, _ = env.accounts.CreateFolder(acct.ID, "INBOX")
+		if _, err := env.accounts.CreateFolder(acct.ID, "INBOX"); err != nil {
+			return err
+		}
 		return nil
 	}
 
