@@ -195,6 +195,9 @@ func TestInsertLocation_FKViolation(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected FK violation for nonexistent message hash")
 	}
+	if !errors.Is(err, ErrFKViolation) {
+		t.Errorf("expected ErrFKViolation, got %v", err)
+	}
 }
 
 func TestListByFolder_ReverseDate(t *testing.T) {
