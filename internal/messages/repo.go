@@ -99,7 +99,7 @@ func (r *Repo) InsertLocation(loc *Location) error {
 	)
 	if err != nil {
 		if isFKViolation(err) {
-			return fmt.Errorf("message hash not found: %w", ErrFKViolation)
+			return fmt.Errorf("inserting location: %w", errors.Join(ErrFKViolation, err))
 		}
 		return fmt.Errorf("inserting location: %w", err)
 	}
