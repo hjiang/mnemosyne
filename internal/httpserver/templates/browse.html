@@ -3,7 +3,7 @@
     <aside class="browse-sidebar">
         {{if .Sidebar}}
         {{range .Sidebar}}
-        <details open>
+        <details{{if .Open}} open{{end}}>
             <summary class="browse-account-header">{{.Label}}</summary>
             <ul class="browse-folder-list">
                 {{range .Folders}}

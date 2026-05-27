@@ -167,6 +167,92 @@ func TestBrowse_FolderMessages_Rendered(t *testing.T) {
 	}
 }
 
+// accountExpanded reports whether the sidebar <details> wrapping the account
+// with the given label was rendered open.
+func accountExpanded(body, label string) bool {
+	marker := "browse-account-header\">" + label
+	li := strings.Index(body, marker)
+	if li < 0 {
+		return false
+	}
+	di := strings.LastIndex(body[:li], "<details")
+	if di < 0 {
+		return false
+	}
+	return strings.Contains(body[di:li], "open>")
+}
+
+func TestBrowse_OnlyActiveAccountExpanded(t *testing.T) {
+	env := newBrowseTestEnv(t)
+
+	acct1, err := env.accounts.Create(env.userAID, "AcctOne", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.accounts.CreateFolder(acct1.ID, "INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	acct2, err := env.accounts.Create(env.userAID, "AcctTwo", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder2, err := env.accounts.CreateFolder(acct2.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedMessage(t, env.messages, env.userAID, folder2.ID, "Hi", "x@x.com", 1)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/browse/%d", folder2.ID), nil)
+	req.AddCookie(&http.Cookie{Name: "mnemosyne_session", Value: env.cookieA})
+	rr := httptest.NewRecorder()
+	env.server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if got := strings.Count(body, "<details open>"); got != 1 {
+		t.Errorf("expected exactly 1 expanded account, got %d", got)
+	}
+	if !accountExpanded(body, "AcctTwo") {
+		t.Error("account containing the active folder should be expanded")
+	}
+	if accountExpanded(body, "AcctOne") {
+		t.Error("account without the active folder should be collapsed")
+	}
+}
+
+func TestBrowse_NoFolder_FirstAccountExpanded(t *testing.T) {
+	env := newBrowseTestEnv(t)
+
+	acct1, err := env.accounts.Create(env.userAID, "AcctOne", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.accounts.CreateFolder(acct1.ID, "INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	acct2, err := env.accounts.Create(env.userAID, "AcctTwo", "h", 993, "u", "p", true, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.accounts.CreateFolder(acct2.ID, "INBOX"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/browse", nil)
+	req.AddCookie(&http.Cookie{Name: "mnemosyne_session", Value: env.cookieA})
+	rr := httptest.NewRecorder()
+	env.server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got := strings.Count(rr.Body.String(), "<details open>"); got != 1 {
+		t.Errorf("expected exactly 1 expanded account with no folder selected, got %d", got)
+	}
+}
+
 func TestBrowse_CrossUserFolder_404(t *testing.T) {
 	env := newBrowseTestEnv(t)
 
