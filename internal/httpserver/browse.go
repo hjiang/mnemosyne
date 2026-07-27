@@ -22,6 +22,7 @@ type browseFolder struct {
 type browseAccount struct {
 	Label   string
 	Folders []browseFolder
+	Open    bool
 }
 
 type browseMessage struct {
@@ -63,14 +64,33 @@ func (s *Server) browseHandler(w http.ResponseWriter, r *http.Request) {
 			folders, _ := s.accounts.ListFolders(acct.ID)
 			ba := browseAccount{Label: acct.Label}
 			for _, f := range folders {
+				active := f.ID == folderID
+				if active {
+					// Expand only the account that owns the active folder, so a
+					// folder-heavy account doesn't bury the others in the sidebar.
+					ba.Open = true
+				}
 				ba.Folders = append(ba.Folders, browseFolder{
 					ID:           f.ID,
 					Name:         f.Name,
 					MessageCount: counts[f.ID],
-					Active:       f.ID == folderID,
+					Active:       active,
 				})
 			}
 			sidebar = append(sidebar, ba)
+		}
+
+		// With no active folder (or one we couldn't match), fall back to
+		// expanding the first account so the sidebar isn't fully collapsed.
+		anyOpen := false
+		for i := range sidebar {
+			if sidebar[i].Open {
+				anyOpen = true
+				break
+			}
+		}
+		if !anyOpen && len(sidebar) > 0 {
+			sidebar[0].Open = true
 		}
 	}
 
